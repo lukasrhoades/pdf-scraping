@@ -27,16 +27,15 @@ def graybook_scraper(pdf):
         # Go through each line
         for line in lines:
             # Check if line starts with name
-            name_match = re.match(r"([A-Za-z-]+),\s([A-Za-z-]+)\s(?:[A-Z][a-z]*\s)*", line)
+            name_match = re.match(r"([A-Z][a-z-]+),\s([A-Z][a-z-]+)\s(?:[A-Z][a-z]*\s)*", line)
 
             if name_match:
                 # Save previous employee's data
-                if employee and "Name" in employee:
+                if employee and "Job Title" in employee:
                     employees.append(employee)
 
                 # New employee record
                 employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
-                employee_total = None
 
                 # Get remainder of line
                 remainder = line[name_match.end():].strip()
@@ -49,14 +48,13 @@ def graybook_scraper(pdf):
                 if "Employee Total" not in line and "$" in line:
                     # Then 2nd job, need to add new row
                     try:
-                        employee_total = {"Name": employee["Name"]}  # Save for total row
+                        employee = {"Name": employee["Name"]}
                     except KeyError:
                         print(line)
-                        employee_total = None
                         continue
                     # Add previous employee row
-                    employees.append(employee)
-                    employee = {"Name": employee["Name"]}  # Only keep their name
+                    if employee and "Job Title" in employee:
+                        employees.append(employee)
                     try:
                         value_finder(employee, line)  # Add 2nd job values
                     except (AttributeError, IndexError):
@@ -64,10 +62,11 @@ def graybook_scraper(pdf):
 
                 elif "Employee Total" in line:
                     # Total for that employee
-                    employees.append(employee)  # Add previous employee row
+                    if employee and "Job Title" in employee:
+                        employees.append(employee)  # Add previous employee row
                     try:
-                        employee = {"Name": employee_total["Name"]}  # Only keep their name
-                    except TypeError:
+                        employee = {"Name": employee["Name"]}  # Only keep their name
+                    except KeyError:
                         continue
                     employee["Job Title"] = "Total for All Jobs"
                     total_values = re.findall(r"(\d+\.\d+)\s+(\d+\.\d+)\s+\$(\d{1,3}(?:,\d{3})*\.\d{2})\s+\$(\d{1,3}(?:,\d{3})*\.\d{2})", line)
@@ -80,7 +79,7 @@ def graybook_scraper(pdf):
                         print(line)
                                 
         # If final employee of page, add
-        if employee and "Name" in employee:
+        if employee and "Job Title" in employee:
             employees.append(employee)
 
     return pd.DataFrame(employees)
