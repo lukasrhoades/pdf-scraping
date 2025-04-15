@@ -1,4 +1,4 @@
-def graybook_scraper_2007(pdf, year):
+def graybook_scraper(pdf, year):
     """Scrapes graybook pdf and returns csv and xlsx file"""
     from PyPDF2 import PdfReader
     import re
@@ -19,57 +19,30 @@ def graybook_scraper_2007(pdf, year):
     for page in reader.pages:
         text = page.extract_text()
 
-        # Skip irrelevant pages
-        if "Job Title" not in text:
-            continue
-
         # Split into lines
         lines = text.split("\n")
 
         # Dictionary for employee data
         employee = {}
 
-        # Go through each line
-        for line in lines:
-            # Check if line starts with name
-            name_match = re.match(r"([A-Z][a-z-]+),\s([A-Z][a-z-]+)\s(?:[A-Z][a-z]*\s)*", line)
+        if 2003 < year < 2007:
+            # Skip irrelevant pages
+            if "Job Description" not in text:
+                continue
+            for line in lines:
+                # Check if line starts with name
+                name_match = re.match(r"([A-Z][a-z-]+),\s([A-Z][a-z-]+)\s(?:[A-Z][a-z]*\s)*", line)
 
-            if name_match:
-                # New employee record
-                employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
-                broken = False
+                if name_match:
+                    # New employee record
+                    employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    broken = False
 
-                # Get remainder of line
-                remainder = line[name_match.end():].strip()
+                    # Get remainder of line
+                    remainder = line[name_match.end():].strip()
 
-                try:
-                    value_finder(employee, remainder)
-                except (AttributeError, IndexError):
-                    missed.append(line)
-                    continue
-                if employee and "Job Title" in employee:
-                    employees.append(employee)
-                else:
-                    missed.append(line)
-                    continue
-            else:
-                # Either department, 2nd job, total, broken name, broken name 2nd job, broken total
-                if ", " in line and "$" in line:  # A broken name
-                    missed.append(line)
-                    broken = True
-                    continue
-                elif broken == True and "$" in line:  # Only valid 2nd job/total if name not broken
-                    missed.append(line)
-                    continue
-                elif "Employee Total" not in line and "$" in line:
-                    # Then 2nd job, need to add new row
-                    try:  # Only catches if previous row is NOT a named row
-                        employee = {"Name": employee["Name"]}
-                    except KeyError:
-                        missed.append(line)
-                        continue
                     try:
-                        value_finder(employee, line)  # Add 2nd job values
+                        value_finder(employee, remainder)
                     except (AttributeError, IndexError):
                         missed.append(line)
                         continue
@@ -78,24 +51,173 @@ def graybook_scraper_2007(pdf, year):
                     else:
                         missed.append(line)
                         continue
-                elif "Employee Total" in line:  # Total
-                    try:
-                        employee = {"Name": employee["Name"]}  # Only keep their name
-                    except KeyError:
+                else:
+                    # Either department, 2nd job, total, broken name, broken name 2nd job, broken total
+                    if ", " in line and "$" in line:  # A broken name
+                        missed.append(line)
+                        broken = True
+                        continue
+                    elif broken == True and "$" in line:  # Only valid 2nd job/total if name not broken
                         missed.append(line)
                         continue
-                    employee["Job Title"] = "Total for All Jobs"
-                    total_values = re.findall(r"(\d+\.\d+)\s+(\d+\.\d+)\s+\$(\d{1,3}(?:,\d{3})*\.\d{2})\s+\$(\d{1,3}(?:,\d{3})*\.\d{2})", line)
+                    elif "*" not in line and "$" in line:
+                        # Then 2nd job, need to add new row
+                        try:  # Only catches if previous row is NOT a named row
+                            employee = {"Name": employee["Name"]}
+                        except KeyError:
+                            missed.append(line)
+                            continue
+                        try:
+                            value_finder(employee, line)  # Add 2nd job values
+                        except (AttributeError, IndexError):
+                            missed.append(line)
+                            continue
+                        if employee and "Job Title" in employee:
+                            employees.append(employee)
+                        else:
+                            missed.append(line)
+                            continue
+                    elif "*" in line and "$" in line:  # Total
+                        try:
+                            employee = {"Name": employee["Name"]}  # Only keep their name
+                        except KeyError:
+                            missed.append(line)
+                            continue
+                        employee["Job Title"] = "Total for All Jobs"
+                        total_values = re.findall(r"(\d+\.\d+)\*\s+(\d+\.\d+)\*\s+\$(\d{1,3}(?:,\d{3})*\.\d{2})\*\s+\$(\d{1,3}(?:,\d{3})*\.\d{2})\*", line)
+                        try:
+                            employee["Present FTE"] = float(total_values[0][0])
+                            employee["Proposed FTE"] = float(total_values[0][1])
+                            employee["Present Salary"] = float(total_values[0][2].replace(",", ""))
+                            employee["Proposed Salary"] = float(total_values[0][3].replace(",", ""))
+                        except IndexError:
+                            missed.append(line)
+                            continue
+                        if employee and "Job Title" in employee:
+                            employees.append(employee)
+        elif year < 2020:
+            # Skip irrelevant pages
+            if "Job Title" not in text:
+                continue
+            for line in lines:
+                # Check if line starts with name
+                name_match = re.match(r"([A-Z][a-z-]+),\s([A-Z][a-z-]+)\s(?:[A-Z][a-z]*\s)*", line)
+
+                if name_match:
+                    # New employee record
+                    employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    broken = False
+
+                    # Get remainder of line
+                    remainder = line[name_match.end():].strip()
+
                     try:
-                        employee["Present FTE"] = float(total_values[0][0])
-                        employee["Proposed FTE"] = float(total_values[0][1])
-                        employee["Present Salary"] = float(total_values[0][2].replace(",", ""))
-                        employee["Proposed Salary"] = float(total_values[0][3].replace(",", ""))
-                    except IndexError:
+                        value_finder(employee, remainder)
+                    except (AttributeError, IndexError):
                         missed.append(line)
                         continue
                     if employee and "Job Title" in employee:
                         employees.append(employee)
+                    else:
+                        missed.append(line)
+                        continue
+                else:
+                    # Either department, 2nd job, total, broken name, broken name 2nd job, broken total
+                    if ", " in line and "$" in line:  # A broken name
+                        missed.append(line)
+                        broken = True
+                        continue
+                    elif broken == True and "$" in line:  # Only valid 2nd job/total if name not broken
+                        missed.append(line)
+                        continue
+                    elif "Employee Total" not in line and "$" in line:
+                        # Then 2nd job, need to add new row
+                        try:  # Only catches if previous row is NOT a named row
+                            employee = {"Name": employee["Name"]}
+                        except KeyError:
+                            missed.append(line)
+                            continue
+                        try:
+                            value_finder(employee, line)  # Add 2nd job values
+                        except (AttributeError, IndexError):
+                            missed.append(line)
+                            continue
+                        if employee and "Job Title" in employee:
+                            employees.append(employee)
+                        else:
+                            missed.append(line)
+                            continue
+                    elif "Employee Total" in line:  # Total
+                        try:
+                            employee = {"Name": employee["Name"]}  # Only keep their name
+                        except KeyError:
+                            missed.append(line)
+                            continue
+                        employee["Job Title"] = "Total for All Jobs"
+                        total_values = re.findall(r"(\d+\.\d+)\s+(\d+\.\d+)\s+\$(\d{1,3}(?:,\d{3})*\.\d{2})\s+\$(\d{1,3}(?:,\d{3})*\.\d{2})", line)
+                        try:
+                            employee["Present FTE"] = float(total_values[0][0])
+                            employee["Proposed FTE"] = float(total_values[0][1])
+                            employee["Present Salary"] = float(total_values[0][2].replace(",", ""))
+                            employee["Proposed Salary"] = float(total_values[0][3].replace(",", ""))
+                        except IndexError:
+                            missed.append(line)
+                            continue
+                        if employee and "Job Title" in employee:
+                            employees.append(employee)
+        else:
+            # Skip irrelevant pages
+            if "Job Title" not in text:
+                continue
+            for line in lines:
+                # Check if line starts with name
+                name_match = re.match(r"([A-Z][a-z-]+),\s([A-Z][a-z-]+)\s(?:[A-Z][a-z]*\s)*", line)
+
+                if name_match:
+                    # New employee record
+                    employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    broken = False
+
+                    # Get remainder of line
+                    remainder = line[name_match.end():].strip()
+
+                    try:
+                        value_finder(employee, remainder)
+                    except (AttributeError, IndexError):
+                        missed.append(line)
+                        continue
+                    if employee and "Job Title" in employee:
+                        employees.append(employee)
+                    else:
+                        missed.append(line)
+                        continue
+                else:
+                    # Either department, total, broken name, broken total
+                    if ", " in line and "$" in line:  # A broken name
+                        missed.append(line)
+                        broken = True
+                        continue
+                    elif broken == True and "$" in line:  # Only valid total if name not broken
+                        missed.append(line)
+                        continue
+                    elif "Employee Total" in line:  # Total
+                        try:
+                            employee = {"Name": employee["Name"]}  # Only keep their name
+                        except KeyError:
+                            missed.append(line)
+                            continue
+                        employee["Job Title"] = "Total for All Jobs"
+                        total_values = re.findall(r"(\d+\.\d+)\s+(\d+\.\d+)\s+\$(\d{1,3}(?:,\d{3})*\.\d{2})\s+\$(\d{1,3}(?:,\d{3})*\.\d{2})", line)
+                        try:
+                            employee["Present FTE"] = float(total_values[0][0])
+                            employee["Proposed FTE"] = float(total_values[0][1])
+                            employee["Present Salary"] = float(total_values[0][2].replace(",", ""))
+                            employee["Proposed Salary"] = float(total_values[0][3].replace(",", ""))
+                        except IndexError:
+                            missed.append(line)
+                            continue
+                        if employee and "Job Title" in employee:
+                            employees.append(employee)
     
     # Create excel file
     df = pd.DataFrame(employees)
