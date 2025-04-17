@@ -440,9 +440,9 @@ def mich_scraper(pdf, year):
         # List to store missed rows
         missed = []
 
-        if 2016 < year < 2019:
+        if 2016 < year < 2019:  # Only have header data on second page
             # Find page with the header data
-            page = pdf.page[1]
+            page = pdf.pages[1]
 
             # Fetch all vertical edges and sort by x-coordinates
             edges = page.edges
@@ -459,7 +459,10 @@ def mich_scraper(pdf, year):
                 elif "APPOINTING" in word["text"]:
                     col_4 = word["x0"] - 1
                 elif "FTR" in word["text"]:
-                    col_5 = word["x0"] - 1
+                    if year == 2017:
+                        col_5 = word["x0"] - 5
+                    else:
+                        col_5 = word["x0"] - 1
                 elif "BASIS" in word["text"]:
                     col_6 = word["x0"] - 12
                 elif "FRACTION" in word["text"]:
@@ -475,7 +478,11 @@ def mich_scraper(pdf, year):
 
         # Iterate through each page
         for page in pdf.pages:
-            if year > 2018:
+            if 2016 < year < 2019:
+                pass  # Already set master settings for whole document above
+
+            # Determine the column settings for optimal scraping
+            else:
                 # Fetch all vertical edges and sort by x-coordinates
                 edges = page.edges
                 vertical_edges = [e for e in edges if e["orientation"] == "v"]
@@ -491,16 +498,30 @@ def mich_scraper(pdf, year):
                     elif "APPOINTING" in word["text"]:
                         col_4 = word["x0"] - 1
                     elif "FTR" in word["text"]:
-                        col_5 = word["x0"] - 1
-                    elif "BASIS" in word["text"]:
-                        if year > 2019:
-                            col_6 = word["x0"] - 1
+                        if year == 2012 or year == 2015:
+                            col_5 = word["x0"] - 35
+                        elif year < 2015 or year == 2016:
+                            col_5 = word["x0"] - 15
+                        elif 2019 < year < 2022:
+                            col_5 = word["x0"] - 1
                         else:
+                            col_5 = word["x0"] - 6
+                    elif "BASIS" in word["text"]:
+                        if year < 2015:
+                            col_6 = word["x0"] - 5
+                        elif year == 2019:
                             col_6 = word["x0"] - 12
+                        else:
+                            col_6 = word["x0"] - 1
                     elif "FRACTION" in word["text"]:
                         col_7 = word["x0"] + 5
                     elif "FUND" in word["text"]:
-                        col_8 = word["x0"]
+                        if year < 2013:
+                            col_8 = word["x0"] - 15
+                        elif year < 2017:
+                            col_8 = word["x0"] - 10
+                        else:
+                            col_8 = word["x0"]
 
                 try:
                     # Set column settings
@@ -509,14 +530,14 @@ def mich_scraper(pdf, year):
                         "horizontal_strategy": "text"
                     }
                 except UnboundLocalError:
-                    print(page)
+                    print(year, page)
                     continue
 
             table = page.extract_table(table_settings=table_settings)
 
             for row in table:
-                if row[0] != "UM_ANN-ARBOR" and row[0] != "UM_DEARBORN":
-                    continue
+                if "UM_" not in row[0]:
+                    continue  # Not a row with employee data
                 try:
                     name_match = re.match(r"(.*),(.*)", row[1])
                     employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
@@ -527,17 +548,26 @@ def mich_scraper(pdf, year):
                 employee["Campus"] = row[0].lstrip("UM_")
                 employee["Appointment Title"] = row[2]
                 employee["Appointing Department"] = row[3]
-                employee["Annnual FTR"] = float(row[4].replace(",", ""))
+                try:
+                    employee["Annnual FTR"] = float(row[4].replace(",", ""))
+                except ValueError:
+                    employee["Annnual FTR"] = row[4]
                 employee["FTR Basis"] = row[5]
-                employee["Fraction"] = float(row[6])
-                employee["General Fund Amount"] = float(row[7].replace(",", ""))
+                try:
+                    employee["Fraction"] = float(row[6])
+                except ValueError:
+                    employee["Fraction"] = row[6]
+                try:
+                    employee["General Fund Amount"] = float(row[7].replace(",", ""))
+                except ValueError:
+                    employee["General Fund Amount"] = row[7]
                 
                 # Add employee
                 employees.append(employee)
        
     # Create excel file
     df = pd.DataFrame(employees)
-    df.to_excel(f"converted/umich/{year}.xlsx")
+    df.to_csv(f"converted/umich/umich-{year}.csv", index=False)
 
     return missed, len(df)
 
