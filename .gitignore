@@ -2,12 +2,13 @@
 /UMich
 /converted
 /images
-illinois_scraping.ipynb
-illinois_scraping_v2.ipynb
+illinois_scraping*
 umich_scraping.ipynb
-total_missed_illinois.xlsx
+missed_illinois_1990.xlsx
+table_debug*
+~*
+*.xlsx
 pdf_scrape.ipynb
-test.xlsx
 .DS_Store
 .ipynb_checkpoints
 __pycache__

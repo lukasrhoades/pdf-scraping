@@ -1,5 +1,5 @@
 def graybook_scraper(pdf, year):
-    """Scrapes graybook pdf and returns csv and xlsx file"""
+    """Scrapes graybook pdf and returns xlsx file"""
     from PyPDF2 import PdfReader
     import pdfplumber
     import re
@@ -11,7 +11,122 @@ def graybook_scraper(pdf, year):
     # List to store missed lines
     missed = []
 
-    if 2003 < year < 2007:
+    if year == 1990:
+        # Read in the pdf file
+        with pdfplumber.open(pdf) as pdf:
+            # Iterate through each page
+            for page in pdf.pages:  
+                # Find columns based on words in header
+                words = page.extract_words()
+                for word in words[:50]:
+                    if "SEPTEMBER" in word["text"]:
+                        col_1 = word["x0"] - 10
+                    elif "1990" in word["text"]:
+                        col_2 = word["x1"] + 20
+                    elif "ILLINOIS" in word["text"]:
+                        col_3 = word["x0"] + 10
+                        col_4 = word["x1"]
+                    elif "PRESENT" in word["text"]:
+                        col_5 = word["x0"] - 5
+                    elif "PROPOSED" in word["text"]:
+                        col_6 = word["x0"] - 1
+                        col_7 = word["x1"] + 1
+                
+                try:
+                    # Set column settings
+                    table_settings = {
+                        "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5, col_6, col_7],
+                        "horizontal_strategy": "text"
+                        }
+                except UnboundLocalError:
+                    print(page)
+                    continue
+
+                table = page.extract_table(table_settings=table_settings)
+
+                try:
+                    for row in table:
+                        # Skip title/empty rows
+                        if "SEPTEMBER" in row[0]:
+                            continue
+                        if "PRESENT" in row[4]:
+                            continue
+                        if row[:] == ["", "", "", "", "", ""]:
+                            continue
+
+                        elif row[0] != "":  # First job
+                            name = row[0]
+                            employee = {"Name": name}
+                            employee["Job Title"] = row[1]
+                            if len(row[2]) != 2:
+                                missed.append(row)
+                                continue
+                            try:
+                                employee["Tenure"] = row[2][0]
+                                employee["Services"] = row[2][1]
+                            except IndexError:
+                                missed.append(row)
+                                continue
+                            employee["Proposed FTE"] = row[3]
+                            try:
+                                employee["Present Salary"] = float(row[4])
+                                employee["Proposed Salary"] = float(row[5])
+                            except IndexError:
+                                missed.append(row)
+                                continue
+                            except ValueError:
+                                employee["Present Salary"] = row[4]
+                                employee["Proposed Salary"] = row[5]
+                            employees.append(employee)
+                        elif "*" in row[3] or "•" in row[3]:  # Total
+                            try:
+                                employee = {"Name": name}
+                                employee["Job Title"] = "Total for All Jobs"
+                                employee["Proposed FTE"] = row[3].rstrip("*").rstrip("•").rstrip("'")
+                                employee["Present Salary"] = float(row[4].rstrip("*").rstrip("•").rstrip("'"))
+                                employee["Proposed Salary"] = float(row[5].rstrip("*").rstrip("•").rstrip("'"))
+                            except IndexError:
+                                missed.append(row)
+                                continue
+                            except ValueError:
+                                employee = {"Name": name}
+                                employee["Job Title"] = "Total for All Jobs"
+                                employee["Proposed FTE"] = row[3].rstrip("*").rstrip("•").rstrip("'")
+                                employee["Present Salary"] = row[4].rstrip("*").rstrip("•").rstrip("'")
+                                employee["Proposed Salary"] = row[5].rstrip("*").rstrip("•").rstrip("'")
+                            employees.append(employee)
+                        elif row[1] == "" and row[-1] != "":  # 2nd payment?
+                            try:
+                                employee = {"Name": name}
+                                employee["Job Title"] = "Second Payment"
+                                employee["Proposed FTE"] = row[3]
+                                employee["Present Salary"] = float(row[4])
+                                employee["Proposed Salary"] = float(row[5])
+                            except (UnboundLocalError, IndexError):
+                                missed.append(row)
+                                continue
+                            except ValueError:
+                                employee = {"Name": name}
+                                employee["Job Title"] = "Second Payment"
+                                employee["Proposed FTE"] = row[3]
+                                employee["Present Salary"] = row[4]
+                                employee["Proposed Salary"] = row[5]
+                            employees.append(employee)
+                        elif row[1] != "":  # Spillover of job title
+                            try:
+                                employee = employees[-1].pop()
+                                employee["Job Title"] += " " + row[1]
+                                employees.append(employee)
+                            except (IndexError, ValueError, TypeError):
+                                missed.append(row)
+                                continue
+                except IndexError:
+                    missed.append(row)
+                    continue
+                except TypeError:
+                    print(page)
+                    continue
+    elif 2003 < year < 2007:
         # Read in the pdf file
         with pdfplumber.open(pdf) as pdf:
             # Iterate through each page
@@ -246,7 +361,7 @@ def value_finder(employee, line):
 
 
 def graybook_scraper_v2(pdf, year):
-    """Scrapes graybook pdf and returns csv and xlsx file"""
+    """Scrapes graybook pdf and returns xlsx file"""
     import pdfplumber
     import re
     import pandas as pd
@@ -397,7 +512,7 @@ def graybook_scraper_v2(pdf, year):
 
 
 def graybook_scraper_v3(xlsx):
-    """Scrapes graybook pdf and returns csv and xlsx file"""
+    """Scrapes graybook pdf and returns xlsx file"""
     import pdfplumber
     import re
     import pandas as pd
@@ -471,7 +586,7 @@ def graybook_scraper_v3(xlsx):
 
 
 def mich_scraper(pdf, year):
-    """Scrapes Mich pdf and returns csv and xlsx file"""
+    """Scrapes Mich pdf and returns xlsx file"""
     import pdfplumber
     import re
     import pandas as pd
@@ -482,19 +597,75 @@ def mich_scraper(pdf, year):
         # List to store dictionaries of values for each employee
         employees = []
 
+        # List to store missed rows
+        missed = []
+
         # Iterate through each page
         for page in pdf.pages:
-            table = page.extract_table(table_settings={
-                "vertical_strategy": "text", 
-                "horizontal_strategy": "text"}
-                )
+            # Fetch all vertical edges and sort by x-coordinates
+            edges = page.edges
+            vertical_edges = [e for e in edges if e["orientation"] == "v"]
+            x_coords = sorted(set([e["x0"] for e in vertical_edges]))
+
+            # Find columns based on words in header
+            words = page.extract_words()
+            for word in words[:50]:
+                if word["text"] == "CAMPUS":
+                    col_1 = word["x0"] - 1
+                elif word["text"] == "NAME":
+                    col_2 = word["x0"] - 1
+                elif word["text"] == "APPOINTMENT":
+                    col_3 = word["x0"] - 1
+                elif word["text"] == "APPOINTING":
+                    col_4 = word["x0"] - 1
+                elif word["text"] == "FTR":
+                    col_5 = word["x0"] - 1
+                elif word["text"] == "BASIS":
+                    col_6 = word["x0"] - 1
+                elif word["text"] == "FRACTION":
+                    col_7 = word["x0"] + 5
+                elif word["text"] == "FUND":
+                    col_8 = word["x0"]
+
+            try:
+                # Set column settings
+                table_settings = {
+                    "explicit_vertical_lines": [x_coords[0], col_1, col_2, col_3, col_4,
+                                                col_5, col_6, col_7, col_8, x_coords[1]],
+                    "horizontal_strategy": "text"
+                }
+            except UnboundLocalError:
+                print(page)
+                continue
+
+            table = page.extract_table(table_settings=table_settings)
 
             for row in table:
                 if row[0] != "UM_ANN-ARBOR" and row[0] != "UM_DEARBORN":
                     continue
-                if len(row) == 9:
+                try:
                     name_match = re.match(r"(.*),(.*)", row[1])
                     employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                except AttributeError:
+                    print(row)
+                    missed.append(row)
+                    continue
+                employee["Campus"] = row[0].lstrip("UM_")
+                employee["Appointment Title"] = row[2]
+                employee["Appointing Department"] = row[3]
+                employee["Annnual FTR"] = float(row[4].replace(",", ""))
+                employee["FTR Basis"] = row[5]
+                employee["Fraction"] = float(row[6])
+                employee["General Fund Amount"] = float(row[7].replace(",", ""))
+                """
+                if len(row) == 9:
+                    try:
+                        name_match = re.match(r"(.*),(.*)", row[1])
+                        employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    except AttributeError:
+                        print(row)
+                        missed.append(row)
+                        continue
                     employee["Campus"] = row[0].lstrip("UM_")
                     employee["Appointment Title"] = row[2] + row[3]
                     employee["Appointing Department"] = row[4]
@@ -503,8 +674,13 @@ def mich_scraper(pdf, year):
                     employee["Fraction"] = row[7]
                     employee["General Fund Amount"] = row[8]
                 elif len(row) == 10:
-                    name_match = re.match(r"(.*),(.*)", row[1])
-                    employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    try:
+                        name_match = re.match(r"(.*),(.*)", row[1])
+                        employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    except AttributeError:
+                        print(row)
+                        missed.append(row)
+                        continue
                     employee["Campus"] = row[0].lstrip("UM_")
                     employee["Appointment Title"] = row[2] + row[3]
                     employee["Appointing Department"] = row[4] + row[5]
@@ -513,8 +689,13 @@ def mich_scraper(pdf, year):
                     employee["Fraction"] = row[8]
                     employee["General Fund Amount"] = row[9]
                 elif len(row) == 11:
-                    name_match = re.match(r"(.*),(.*)", row[1])
-                    employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    try:
+                        name_match = re.match(r"(.*),(.*)", row[1])
+                        employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    except AttributeError:
+                        print(row)
+                        missed.append(row)
+                        continue
                     employee["Campus"] = row[0].lstrip("UM_")
                     employee["Appointment Title"] = row[2] + row[3] + row[4]
                     employee["Appointing Department"] = row[5] + row[6]
@@ -523,8 +704,13 @@ def mich_scraper(pdf, year):
                     employee["Fraction"] = row[9]
                     employee["General Fund Amount"] = row[10]
                 elif len(row) == 12:
-                    name_match = re.match(r"(.*),(.*)", row[1])
-                    employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    try:
+                        name_match = re.match(r"(.*),(.*)", row[1])
+                        employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    except AttributeError:
+                        print(row)
+                        missed.append(row)
+                        continue
                     employee["Campus"] = row[0].lstrip("UM_")
                     employee["Appointment Title"] = row[2] + row[3] + row[4] + row[5]
                     employee["Appointing Department"] = row[6] + row[7]
@@ -533,8 +719,13 @@ def mich_scraper(pdf, year):
                     employee["Fraction"] = row[10]
                     employee["General Fund Amount"] = row[11]
                 elif len(row) == 13:
-                    name_match = re.match(r"(.*),(.*)", row[1])
-                    employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    try:
+                        name_match = re.match(r"(.*),(.*)", row[1])
+                        employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    except AttributeError:
+                        print(row)
+                        missed.append(row)
+                        continue
                     employee["Campus"] = row[0].lstrip("UM_")
                     employee["Appointment Title"] = row[2] + row[3] + row[4] + row[5] + row[6]
                     employee["Appointing Department"] = row[7] + row[8]
@@ -543,8 +734,13 @@ def mich_scraper(pdf, year):
                     employee["Fraction"] = row[11]
                     employee["General Fund Amount"] = row[12]
                 elif len(row) == 14:
-                    name_match = re.match(r"(.*),(.*)", row[1])
-                    employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    try:
+                        name_match = re.match(r"(.*),(.*)", row[1])
+                        employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    except AttributeError:
+                        print(row)
+                        missed.append(row)
+                        continue
                     employee["Campus"] = row[0].lstrip("UM_")
                     employee["Appointment Title"] = row[2] + row[3] + row[4] + row[5] + row[6]
                     employee["Appointing Department"] = row[6] + row[7] + row[8] + row[9]
@@ -554,11 +750,12 @@ def mich_scraper(pdf, year):
                     employee["General Fund Amount"] = row[13]
                 else:
                     print(len(row), row)
+                """
                 employees.append(employee)
        
     # Create excel file
     df = pd.DataFrame(employees)
     df.to_excel(f"converted/umich/{year}.xlsx")
 
-    return len(df)
+    return missed, len(df)
 
