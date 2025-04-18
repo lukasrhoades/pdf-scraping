@@ -1,5 +1,5 @@
 def graybook_scraper(pdf, year):
-    """Scrapes graybook pdf and returns xlsx file"""
+    """Scrapes graybook pdf and returns csv file"""
     from PyPDF2 import PdfReader
     import pdfplumber
     import re
@@ -114,7 +114,7 @@ def graybook_scraper(pdf, year):
                             employees.append(employee)
                         elif row[1] != "":  # Spillover of job title
                             try:
-                                employee = employees[-1].pop()
+                                employee = employees.pop(-1)
                                 employee["Job Title"] += " " + row[1]
                                 employees.append(employee)
                             except (IndexError, ValueError, TypeError):
@@ -351,13 +351,13 @@ def value_finder(employee, line):
         return IndexError
 
 
-def graybook_scraper_v3(xlsx):
-    """Scrapes graybook pdf and returns xlsx file"""
+def graybook_scraper_r2(data):
+    """Scrapes csv of missed observations"""
     import pdfplumber
     import re
     import pandas as pd
 
-    temp = pd.read_excel(xlsx)
+    temp = pd.read_csv(data)
     df = pd.DataFrame(temp.loc[:,["Year", "Data"]])
     df["Name"] = None
     df["Job Title"] = None
@@ -420,13 +420,13 @@ def graybook_scraper_v3(xlsx):
                 continue
 
     # Create excel file
-    df.to_excel(f"converted/illinois/converted.xlsx")
+    df.to_csv(f"converted/illinois/converted.csv")
 
     return df
 
 
 def mich_scraper(pdf, year):
-    """Scrapes Mich pdf and returns xlsx file"""
+    """Scrapes Mich pdf and returns csv file"""
     import pdfplumber
     import re
     import pandas as pd
@@ -490,26 +490,41 @@ def mich_scraper(pdf, year):
 
                 # Find columns based on words in header
                 words = page.extract_words()
-                for word in words[:50]:
+                for word in words[:55]:
                     if "NAME" in word["text"]:
-                        col_2 = word["x0"] - 1
+                        if year > 2008:
+                            col_2 = word["x0"] - 1
+                        else:
+                            col_2 = word["x0"] - 57
                     elif "APPOINTMENT" in word["text"]:
-                        col_3 = word["x0"] - 1
+                        if year > 2008:
+                            col_3 = word["x0"] - 1
+                        else:
+                            col_3 = word["x0"] - 35
                     elif "APPOINTING" in word["text"]:
-                        col_4 = word["x0"] - 1
+                        if year > 2008:
+                            col_4 = word["x0"] - 1
+                        else:
+                            col_4 = word["x0"] - 37
                     elif "FTR" in word["text"]:
-                        if year == 2012 or year == 2015:
+                        if 2009 < year < 2012:
+                            col_5 = word["x0"] - 27
+                        elif year == 2012 or year == 2015:
                             col_5 = word["x0"] - 35
-                        elif year < 2015 or year == 2016:
+                        elif 2012 < year < 2015 or year == 2016:
                             col_5 = word["x0"] - 15
                         elif 2019 < year < 2022:
                             col_5 = word["x0"] - 1
                         else:
                             col_5 = word["x0"] - 6
                     elif "BASIS" in word["text"]:
-                        if year < 2015:
+                        if year == 2009:
+                            col_6 = word["x0"] - 8
+                        elif year == 2010:
+                            col_6 = word["x0"] - 10
+                        elif 2010 < year < 2015:
                             col_6 = word["x0"] - 5
-                        elif year == 2019:
+                        elif year == 2008 or year == 2019:
                             col_6 = word["x0"] - 12
                         else:
                             col_6 = word["x0"] - 1
@@ -526,7 +541,7 @@ def mich_scraper(pdf, year):
                 try:
                     # Set column settings
                     table_settings = {
-                        "explicit_vertical_lines": [x_coords[0], col_2, col_3, col_4, col_5, col_6, col_7, col_8, x_coords[1]],
+                        "explicit_vertical_lines": [x_coords[0], col_2, col_3, col_4, col_5, col_6, col_7, col_8, x_coords[-1]],
                         "horizontal_strategy": "text"
                     }
                 except UnboundLocalError:
@@ -535,16 +550,35 @@ def mich_scraper(pdf, year):
 
             table = page.extract_table(table_settings=table_settings)
 
+            re_match = False  # In case first name is on a second row
+
             for row in table:
                 if "UM_" not in row[0]:
+                    if year < 2012 and row[0] == "":
+                        if row[1] != "Name" and row[1] != "":  # Second part of name
+                            employee = employees.pop(-1)
+                            if employee["Name"][-1] == "-":
+                                employee["Name"] += row[1]
+                            else:
+                                employee["Name"] += " " + row[1]
+                            
+                            if re_match:
+                                name_match = re.match(r"(.*),(.*)", employee["Name"])
+                                employee["Name"] = name_match.group(2).strip() + " " + name_match.group(1).strip()
+                            employees.append(employee)
+                            re_match = False
                     continue  # Not a row with employee data
                 try:
                     name_match = re.match(r"(.*),(.*)", row[1])
                     employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
                 except AttributeError:
-                    print(row)
-                    missed.append(row)
-                    continue
+                    if year < 2012:
+                        employee = {"Name": row[1]}
+                        re_match = True
+                    else:
+                        print(row)
+                        missed.append(row)
+                        continue
                 employee["Campus"] = row[0].lstrip("UM_")
                 employee["Appointment Title"] = row[2]
                 employee["Appointing Department"] = row[3]
