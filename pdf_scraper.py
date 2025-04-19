@@ -440,6 +440,125 @@ def mich_scraper(pdf, year):
         # List to store missed rows
         missed = []
 
+        if year < 2008:  # Header data only on first page
+            # Find page with the header data
+            page = pdf.pages[0]
+
+            # Fetch all vertical edges and sort by x-coordinates
+            edges = page.edges
+            vertical_edges = [e for e in edges if e["orientation"] == "v"]
+            x_coords = sorted(set([e["x0"] for e in vertical_edges]))
+
+            # Find columns based on words in header
+            words = page.extract_words()
+        
+            if year == 2003:
+                for word in words[:15]:
+                    if "Campus" in word["text"]:
+                        col_1 = word["x0"] - 1
+                    elif "Employee" in word["text"]:
+                        col_2 = word["x0"] - 1
+                    elif "Jobcode" in word["text"]:
+                        col_3 = word["x0"] - 1
+                    elif "Dept" in word["text"]:
+                        col_4 = word["x0"] - 1
+                    elif "AnlFTR" in word["text"]:
+                        col_5 = word["x0"] - 1
+                    elif "Period" in word["text"]:
+                        col_6 = word["x0"] - 1
+                    elif "FTE" in word["text"]:
+                        col_7 = word["x0"] - 1
+                    elif "General" in word["text"]:
+                        col_8 = word["x0"] - 1
+                    elif "Fund" in word["text"]:
+                        col_9 = word["x1"] - 5
+            elif year == 2004:
+                for word in words[:15]:
+                    if "UM_" in word["text"]:
+                        col_1 = word["x0"] - 1
+                    elif "Brown,Karen" in word["text"]:
+                        col_2 = word["x0"] - 1
+                    elif "ADMINISTRATIVE" in word["text"]:
+                        col_3 = word["x0"] - 1
+                    elif "Continuing" in word["text"]:
+                        col_4 = word["x0"] - 1
+                    elif "92,983.27" in word["text"]:
+                        col_5 = word["x0"] - 20
+                    elif "12-Month" in word["text"]:
+                        col_6 = word["x0"] - 1
+                    elif "1" in word["text"]:
+                        col_7 = word["x0"] - 20
+                    elif "0.00" in word["text"]:
+                        col_8 = word["x0"] - 1
+                        col_9 = word["x1"] + 26
+            else:
+                for word in words[:25]:
+                    if "CAMPUS" in word["text"]:
+                        col_1 = word["x0"] - 1
+                    elif "NAME" in word["text"]:
+                        col_2 = word["x0"] - 1
+                    elif "TITLE" in word["text"]:
+                        if year != 2002 and year != 2006:
+                            col_3 = word["x0"] - 60
+                        else:
+                            col_3 = word["x0"] - 1
+                    elif "DEPT" in word["text"]:
+                        if year == 2002 or year == 2006:
+                            col_4 = word["x0"] - 1
+                    elif "APPOINTING" in word["text"]:
+                        if year != 2002 and year != 2006:
+                            col_4 = word["x0"] - 1
+                    elif "ANNUAL" in word["text"]:
+                        if year == 2005:
+                            col_5 = word["x0"] + 10
+                        elif year == 2007:
+                            col_5 = word["x0"] - 10
+                    elif "FTR" in word["text"]:
+                        if year == 2002:
+                            col_5 = word["x0"] - 3
+                        elif year == 2006:
+                            col_5 = word["x0"] + 8
+                        else:
+                            col_6 = word["x0"] - 27 
+                    elif "BASIS" in word["text"]:
+                        if year == 2002:
+                            col_6 = word["x0"] - 1
+                        elif year == 2005:
+                            col_7 = word["x0"] + 5
+                    elif "RPT" in word["text"]:
+                        if year == 2006:
+                            col_6 = word["x0"] - 1
+                    elif "FTE" in word["text"]:
+                        if year == 2002 or year == 2006:
+                            col_7 = word["x0"]
+                    elif "FRAC" in word["text"]:
+                        if year > 2006:
+                            col_7 = word["x0"] - 5
+                    elif "GF" in word["text"]:
+                        if year == 2006:
+                            col_8 = word["x0"] + 1
+                            col_9 = word["x1"] + 41
+                    elif "GEN" in word["text"]:
+                        if year == 2002:
+                            col_8 = word["x0"]
+                    elif "OF" in word["text"]:
+                        if year != 2002 and year != 2006:
+                            col_8 = word["x0"] - 15
+                    elif "PAID" in word["text"]:
+                        if year == 2007:
+                            col_9 = word["x0"] + 10
+                        elif year == 2005:
+                            col_9 = word["x0"] + 14
+                    elif "FUND" in word["text"]:
+                        if year == 2002:
+                            col_9 = word["x1"] + 3
+
+            # Set column settings
+            table_settings = {
+                "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5, col_6, col_7, col_8, col_9],
+                "horizontal_strategy": "text"
+            }
+
         if 2016 < year < 2019:  # Only have header data on second page
             # Find page with the header data
             page = pdf.pages[1]
@@ -478,7 +597,7 @@ def mich_scraper(pdf, year):
 
         # Iterate through each page
         for page in pdf.pages:
-            if 2016 < year < 2019:
+            if year < 2008 or 2016 < year < 2019:
                 pass  # Already set master settings for whole document above
 
             # Determine the column settings for optimal scraping
@@ -554,7 +673,7 @@ def mich_scraper(pdf, year):
 
             for row in table:
                 if "UM_" not in row[0]:
-                    if year < 2012 and row[0] == "":
+                    if 2007 < year < 2012 and row[0] == "":
                         if row[1] != "Name" and row[1] != "":  # Second part of name
                             employee = employees.pop(-1)
                             if employee["Name"][-1] == "-":
@@ -579,22 +698,35 @@ def mich_scraper(pdf, year):
                         print(row)
                         missed.append(row)
                         continue
-                employee["Campus"] = row[0].lstrip("UM_")
+                if year == 2004:
+                     employee["Campus"] = row[0].lstrip('"UM_')
+                else:
+                    employee["Campus"] = row[0].lstrip("UM_")
                 employee["Appointment Title"] = row[2]
                 employee["Appointing Department"] = row[3]
                 try:
                     employee["Annnual FTR"] = float(row[4].replace(",", ""))
                 except ValueError:
                     employee["Annnual FTR"] = row[4]
+                    missed.append(row)
                 employee["FTR Basis"] = row[5]
                 try:
                     employee["Fraction"] = float(row[6])
                 except ValueError:
                     employee["Fraction"] = row[6]
-                try:
-                    employee["General Fund Amount"] = float(row[7].replace(",", ""))
-                except ValueError:
-                    employee["General Fund Amount"] = row[7]
+                    missed.append(row)
+                if year == 2004:
+                    try:
+                        employee["General Fund Amount"] = float(row[7].rstrip('"').replace(",", ""))
+                    except ValueError:
+                        employee["General Fund Amount"] = row[7].rstrip('"')
+                        missed.append(row)
+                else:
+                    try:
+                        employee["General Fund Amount"] = float(row[7].replace(",", ""))
+                    except ValueError:
+                        employee["General Fund Amount"] = row[7]
+                        missed.append(row)
                 
                 # Add employee
                 employees.append(employee)
