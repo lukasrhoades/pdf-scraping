@@ -1,13 +1,16 @@
 /University_of_Illinois
 /UMich
+/UF
 /converted
 /images
 illinois_scraping*
 umich_scraping.ipynb
+uf_scraping.ipynb
 missed_illinois_1990.xlsx
 table_debug*
 ~*
 *.xlsx
+rotated_temp.pdf
 pdf_scrape.ipynb
 .DS_Store
 .ipynb_checkpoints

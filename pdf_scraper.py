@@ -324,7 +324,7 @@ def graybook_scraper(pdf, year):
                             if employee and "Job Title" in employee:
                                 employees.append(employee)
     
-    # Create excel file
+    # Create csv file
     df = pd.DataFrame(employees)
     df.to_csv(f"converted/illinois/{year}.csv", index=False)
 
@@ -351,7 +351,7 @@ def value_finder(employee, line):
         return IndexError
 
 
-def graybook_scraper_r2(data):
+def graybook_missed_scraper(data):
     """Scrapes csv of missed observations"""
     import pdfplumber
     import re
@@ -419,7 +419,7 @@ def graybook_scraper_r2(data):
             except IndexError:
                 continue
 
-    # Create excel file
+    # Create csv file
     df.to_csv(f"converted/illinois/converted.csv")
 
     return df
@@ -731,9 +731,73 @@ def mich_scraper(pdf, year):
                 # Add employee
                 employees.append(employee)
        
-    # Create excel file
+    # Create csv file
     df = pd.DataFrame(employees)
     df.to_csv(f"converted/umich/umich-{year}.csv", index=False)
 
     return missed, len(df)
+
+
+def uf_scraper(pdf, year):
+    """Scrapes UF salary data pdf and returns csv"""
+    import pdfplumber
+    import re
+    import pandas as pd
+
+    # Read in the pdf file
+    with pdfplumber.open(pdf) as pdf:
+
+        # List to store dictionaries of values for each employee
+        employees = []
+
+        # List to store missed rows
+        missed = []
+
+        # Iterate through each page
+        for page in pdf.pages:
+
+            # Set column settings
+            table_settings = {
+                "vertical_strategy": "lines",
+                "horizontal_strategy": "lines"
+            }
+
+            table = page.extract_table(table_settings=table_settings)
+
+            for row in table:
+                if "College or Area" in row[0]:
+                    continue  # Header row
+                elif row[0] != "":
+                    college_area = row[0]
+                    department = row[1]
+                
+                try:
+                    name_match = re.match(r"(.*),(.*)", row[2])
+                    employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                except AttributeError:
+                    employee = {"Name": row[2]}
+                employee["College"] = college_area
+                employee["Department"] = department
+                employee["Job Title"] = row[3]
+                try:
+                    employee["Budget FTE"] = float(row[4].replace(",", ""))
+                except ValueError:
+                    employee["Budget FTE"] = row[4]
+                    missed.append(row)
+                try:
+                    employee["Annual Compensation"] = float(row[5].lstrip("$").replace(",", ""))
+                except ValueError:
+                    employee["Annual Compensation"] = row[5]
+                    missed.append(row)
+                
+                # Add observation
+                employees.append(employee)
+
+    # Create csv file
+    df = pd.DataFrame(employees)
+    df.to_csv(f"converted/uf/uf-{year}.csv", index=False)
+
+    return missed, len(df)
+
+
 
