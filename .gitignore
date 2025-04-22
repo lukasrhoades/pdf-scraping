@@ -2,10 +2,13 @@
 /UMich
 /UF
 /converted
+/old_images
 /images
+/training_data
 illinois_scraping*
 umich_scraping.ipynb
 uf_scraping.ipynb
+pre_processing.ipynb
 missed_illinois_1990.xlsx
 table_debug*
 ~*
