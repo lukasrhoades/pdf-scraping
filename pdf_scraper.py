@@ -756,39 +756,107 @@ def uf_scraper(pdf, year):
         # Iterate through each page
         for page in pdf.pages:
 
-            # Set column settings
-            table_settings = {
-                "vertical_strategy": "lines",
-                "horizontal_strategy": "lines"
-            }
+            if year < 2018:
+                # Find columns based on words in header
+                words = page.extract_words()
+                col_1, col_2, col_3, col_4, col_5 = [None] * 5  # Initialize columns
+                for word in words[:50]:
+                    if "NAME" in word["text"]:
+                        if col_1 is None:  # Only use first occurance
+                            col_1 = word["x0"] - 60
+                    elif "JOB" in word["text"]:
+                        if col_2 is None:
+                            col_2 = word["x0"] - 65
+                    elif "FTE" in word["text"]:
+                        if col_3 is None:
+                            col_3 = word["x0"] - 17
+                    elif "CURRENT" in word["text"]:
+                        if col_4 is None:
+                            col_4 = word["x0"] - 20
+                            col_5 = word["x1"] + 25
+
+                # Set column settings
+                table_settings = {
+                    "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5], 
+                    "horizontal_strategy": "text"
+                    }
+            else:
+                # Set column settings
+                table_settings = {
+                    "vertical_strategy": "lines",
+                    "horizontal_strategy": "lines"
+                }
 
             table = page.extract_table(table_settings=table_settings)
 
+            if year < 2018:
+                if len(table[0]) != 4:  # Fix columns if not producing 4 rows
+                    col_1 += 60
+                    table_settings = {
+                        "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5], 
+                        "horizontal_strategy": "text"
+                        }
+                    table = page.extract_table(table_settings=table_settings)
+
             for row in table:
-                if "College or Area" in row[0]:
-                    continue  # Header row
-                elif row[0] != "":
-                    college_area = row[0]
-                    department = row[1]
-                
-                try:
-                    name_match = re.match(r"(.*),(.*)", row[2])
-                    employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
-                except AttributeError:
-                    employee = {"Name": row[2]}
-                employee["College"] = college_area
-                employee["Department"] = department
-                employee["Job Title"] = row[3]
-                try:
-                    employee["Budget FTE"] = float(row[4].replace(",", ""))
-                except ValueError:
-                    employee["Budget FTE"] = row[4]
-                    missed.append(row)
-                try:
-                    employee["Annual Compensation"] = float(row[5].lstrip("$").replace(",", ""))
-                except ValueError:
-                    employee["Annual Compensation"] = row[5]
-                    missed.append(row)
+                if year < 2018:
+                    if row[0] == "" or row[0] == "NAME":
+                        continue  # Header or empty
+                    if row[2] == "" and row[3] == "":
+                        continue  # College/department
+                    if "-----" in row[0]:
+                        continue  # Separator
+
+                    employee = {"Name": row[0].title()}
+                    employee["Job Title"] = row[1]
+                    try:
+                        employee["Budget FTE"] = float(row[2].replace(",", ""))
+                    except AttributeError:
+                        employee["Budget FTE"] = row[2]
+                        missed.append(row)
+                    except ValueError:
+                        if "+" in row[2]:
+                            grand_total = row[2].lstrip("+") + row[3]
+                            try:
+                                employee["Current Rate"] = float(grand_total.replace(",", ""))
+                            except AttributeError:
+                                employee["Current Rate"] = grand_total
+                                missed.append(row)
+                            employees.append(employee)
+                            continue
+                        else:
+                            missed.append(row)
+                    try:
+                        employee["Current Rate"] = float(row[3].replace(",", ""))
+                    except AttributeError:
+                        employee["Current Rate"] = row[3]
+                        missed.append(row)
+
+                else:
+                    if "College or Area" in row[0]:
+                        continue  # Header row
+                    elif row[0] != "":
+                        college_area = row[0]
+                        department = row[1]
+
+                    try:
+                        name_match = re.match(r"(.*),(.*)", row[2])
+                        employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    except AttributeError:
+                        employee = {"Name": row[2]}
+                    employee["College"] = college_area
+                    employee["Department"] = department
+                    employee["Job Title"] = row[3]
+                    try:
+                        employee["Budget FTE"] = float(row[4].replace(",", ""))
+                    except ValueError:
+                        employee["Budget FTE"] = row[4]
+                        missed.append(row)
+                    try:
+                        employee["Annual Compensation"] = float(row[5].lstrip("$").replace(",", ""))
+                    except ValueError:
+                        employee["Annual Compensation"] = row[5]
+                        missed.append(row)
                 
                 # Add observation
                 employees.append(employee)
