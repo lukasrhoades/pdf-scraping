@@ -1,6 +1,6 @@
 def graybook_scraper(pdf, year):
     """Scrapes graybook pdf and returns csv file"""
-    from PyPDF2 import PdfReader
+    from PyPDF2 import PdfReader, PdfWriter
     import pdfplumber
     import re
     import pandas as pd
@@ -13,19 +13,27 @@ def graybook_scraper(pdf, year):
 
     if year == 1990:
         # Read in the pdf file
-        with pdfplumber.open(pdf) as pdf:
+        with pdfplumber.open(pdf) as mario:
             # Iterate through each page
-            for page in pdf.pages:  
+            for i, page in enumerate(mario.pages):  
                 # Find columns based on words in header
                 words = page.extract_words()
+                try:
+                    if "=<C=" in words[1]["text"]:
+                        break  # Reached end of salary data
+                except IndexError:
+                    print(page)  # Not a page with employee data
+                    continue
+                col_3 = None
                 for word in words[:50]:
                     if "SEPTEMBER" in word["text"]:
                         col_1 = word["x0"] - 10
                     elif "1990" in word["text"]:
                         col_2 = word["x1"] + 20
                     elif "ILLINOIS" in word["text"]:
-                        col_3 = word["x0"] + 10
-                        col_4 = word["x1"]
+                        if col_3 is None:
+                            col_3 = word["x0"] + 10
+                            col_4 = word["x1"]
                     elif "PRESENT" in word["text"]:
                         col_5 = word["x0"] - 5
                     elif "PROPOSED" in word["text"]:
@@ -38,20 +46,36 @@ def graybook_scraper(pdf, year):
                         "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5, col_6, col_7],
                         "horizontal_strategy": "text"
                         }
-                except UnboundLocalError:
+                except UnboundLocalError:  # Not a page with employee data
                     print(page)
                     continue
+                
+                try:
+                    table = page.extract_table(table_settings=table_settings)
+                except TypeError:  # Use Azure
+                    # Save page
+                    reader = PdfReader(pdf)
+                    page_saver = PdfWriter()
+                    page_saver.add_page(reader.pages[i])
+                    page_saver.write("temp.pdf")
 
-                table = page.extract_table(table_settings=table_settings)
+                    # Make API call
+                    try:
+                        table = get_azure_data("temp.pdf")
+                    except IndexError:
+                        print(page)
+                        continue
 
                 try:
                     for row in table:
-                        # Skip title/empty rows
+                        # Skip title/empty/irrelevant rows
                         if "SEPTEMBER" in row[0]:
                             continue
                         if "PRESENT" in row[4]:
                             continue
                         if row[:] == ["", "", "", "", "", ""]:
+                            continue
+                        if re.match(r".-..-..\s", row[0]):
                             continue
 
                         elif row[0] != "":  # First job
@@ -77,6 +101,11 @@ def graybook_scraper(pdf, year):
                             except ValueError:
                                 employee["Present Salary"] = row[4]
                                 employee["Proposed Salary"] = row[5]
+                            employees.append(employee)
+                        elif row[1] != "" and row[0] == "" and row[2:6] == [""] * 4:
+                            # Second part of job title
+                            employee = employees.pop(-1)
+                            employee["Job Title"] += " " + row[1]
                             employees.append(employee)
                         elif "*" in row[3] or "•" in row[3]:  # Total
                             try:
@@ -867,5 +896,48 @@ def uf_scraper(pdf, year):
 
     return missed, len(df)
 
+
+def get_azure_data(file):
+    """Uses Azure Document Intelligence to retrieve data when column identifiers fail"""
+    import codes
+    import base64
+    from azure.core.credentials import AzureKeyCredential
+    from azure.ai.documentintelligence import DocumentIntelligenceClient
+    from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
+    import pandas as pd
+
+    endpoint = codes.endpoint
+    key = codes.api_key
+
+    with open(file, "rb") as f:
+        base64_encoded_pdf = base64.b64encode(f.read()).decode()
+
+    document_intelligence_client  = DocumentIntelligenceClient(
+        endpoint=endpoint, credential=AzureKeyCredential(key)
+    )
+
+    poller = document_intelligence_client.begin_analyze_document(
+        "prebuilt-layout", AnalyzeDocumentRequest(bytes_source=base64_encoded_pdf)
+    )
+    result = poller.result()
+
+    table = result.tables[0]
+
+    # Convert to pandas dataframe
+    matrix = [["" for _ in range(table.column_count)] for _ in range(table.row_count)]
+    for cell in table.cells:
+        row_index = cell.row_index
+        column_index = cell.column_index
+
+        if row_index < table.row_count and column_index < table.column_count:
+            matrix[row_index][column_index] = cell.content
+    df = pd.DataFrame(matrix)
+
+    # Then convert to table to use in scraper
+    table = []
+    for idx, row in df.iterrows():
+        table.append(list(row))
+
+    return table
 
 
