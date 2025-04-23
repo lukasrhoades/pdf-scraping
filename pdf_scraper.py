@@ -52,23 +52,30 @@ def graybook_scraper(pdf, year):
                 
                 try:
                     table = page.extract_table(table_settings=table_settings)
-                except TypeError:  # Use Azure
-                    # Save page
-                    reader = PdfReader(pdf)
-                    page_saver = PdfWriter()
-                    page_saver.add_page(reader.pages[i])
-                    page_saver.write("temp.pdf")
-
-                    # Make API call
-                    try:
-                        table = get_azure_data("temp.pdf")
-                    except IndexError:
-                        print(page)
+                    if i == 141:  # Buggy page, need to use Azure
+                        raise TypeError
+                except TypeError:
+                    if len(words) < 25:  # Not a page with employee data
                         continue
+                    else:  # Use Azure
+                        # Save page
+                        reader = PdfReader(pdf)
+                        page_saver = PdfWriter()
+                        page_saver.add_page(reader.pages[i])
+                        page_saver.write("temp.pdf")
+
+                        # Make API call
+                        try:
+                            table = get_azure_data("temp.pdf")
+                        except IndexError:  # No tables detected
+                            print(page)
+                            continue
 
                 try:
                     for row in table:
                         # Skip title/empty/irrelevant rows
+                        if row[0] is None:
+                            continue
                         if "SEPTEMBER" in row[0]:
                             continue
                         if "PRESENT" in row[4]:
@@ -153,6 +160,7 @@ def graybook_scraper(pdf, year):
                     missed.append(row)
                     continue
                 except TypeError:
+                    print(row)
                     print(page)
                     continue
     elif 2003 < year < 2007:
@@ -932,6 +940,16 @@ def get_azure_data(file):
         if row_index < table.row_count and column_index < table.column_count:
             matrix[row_index][column_index] = cell.content
     df = pd.DataFrame(matrix)
+
+    # Get rid of extra rows if there are any
+    if len(df.columns) > 6:
+        if len(df.columns) == 8:
+            df = pd.DataFrame({
+                "0": df[0] + df[1], "1": df[2] + df[3], "2": df[4], "3": df[5], "4": df[6], "5": df[7]
+            })
+        else:
+            print(len(df.columns))
+            raise ValueError
 
     # Then convert to table to use in scraper
     table = []
