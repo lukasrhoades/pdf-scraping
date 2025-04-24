@@ -2,6 +2,7 @@ def graybook_scraper(pdf, year):
     """Scrapes graybook pdf and returns csv file"""
     from PyPDF2 import PdfReader, PdfWriter
     import pdfplumber
+    import camelot
     import re
     import pandas as pd
 
@@ -220,6 +221,40 @@ def graybook_scraper(pdf, year):
                             employees.append(employee)
                 except TypeError:
                     print(year, page)
+    elif year == 2023:
+        # Extract all tables
+        tables = camelot.read_pdf(pdf, pages="all", flavor="stream")
+
+        # Clean each table
+        df = pd.DataFrame()
+        for i, table in enumerate(tables):
+            if len(table.df.columns) != 9:
+                print(f"Page {i+1}", len(table.df.columns))
+                continue
+
+            table.df.dropna(thresh=2)  # Drop rows with just department data or central header
+
+            # Drop header columns
+            mask1 = table.df.loc[:,0] != "Employee Name"
+            table.df = table.df[mask1]
+            mask2 = table.df.loc[:,8] != "Proposed"
+            table.df = table.df[mask2]
+
+            # Add to master dataframe
+            if df.empty:
+                df = table.df
+            else:
+                df = pd.concat([df, table.df]).reset_index(drop=True)
+        
+        # Rename columns
+        df = pd.DataFrame({
+            "Name": df.loc[:,0], "Job Title": df.loc[:,1], "Total": df.loc[:,2], "Tenure": df.loc[:,3],"Employee Class": df.loc[:,4], 
+            "Present FTE": df.loc[:,5], "Proposed FTE": df.loc[:,6], "Present Salary": df.loc[:,7], "Proposed Salary": df.loc[:,8]
+        })
+
+        df.to_csv(f"converted/illinois/{year}.csv", index=False)
+
+        return len(df)
 
     else:
         # Read in the pdf file
