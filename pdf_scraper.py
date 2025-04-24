@@ -919,18 +919,21 @@ def uf_scraper(pdf, year):
                 # Add observation
                 employees.append(employee)
 
-    # Create csv file with complete data
+    # Create dataframe with all employee data
     df = pd.DataFrame(employees)
-    df.to_csv(f"converted/uf/uf-{year}.csv", index=False)
 
     # Group by name and sum the salaries
     grouped = df[df["Budget FTE"] < 1].groupby("Name").sum(["Budget FTE", "Current Rate"])
     grouped.drop(index="College Total", inplace=True)
     grouped.drop(index="Dept Total", inplace=True)
     others = df[df["Budget FTE"] == 1].set_index("Name")
+    others.drop(index="Dept Total", inplace=True)
     combined = pd.concat([others[["Budget FTE", "Current Rate"]], grouped])
-    combined.sort_index(inplace=True)
-    combined.to_csv("converted/uf/grouped-uf-2017.csv")
+    combined.rename(columns={"Budget FTE": "Total Fraction", "Current Rate": "Total Rate"}, inplace=True)
+
+    # Megre back to complete data and write csv
+    df = pd.merge(df, combined, how="left", on="Name")
+    df.to_csv(f"converted/uf/uf-{year}.csv", index=False)
 
     return missed, len(df)
 
