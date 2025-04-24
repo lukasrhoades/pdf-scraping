@@ -2,7 +2,6 @@ def graybook_scraper(pdf, year):
     """Scrapes graybook pdf and returns csv file"""
     from PyPDF2 import PdfReader, PdfWriter
     import pdfplumber
-    import camelot
     import re
     import pandas as pd
 
@@ -221,40 +220,6 @@ def graybook_scraper(pdf, year):
                             employees.append(employee)
                 except TypeError:
                     print(year, page)
-    elif year == 2023:
-        # Extract all tables
-        tables = camelot.read_pdf(pdf, pages="all", flavor="stream")
-
-        # Clean each table
-        df = pd.DataFrame()
-        for i, table in enumerate(tables):
-            if len(table.df.columns) != 9:
-                print(f"Page {i+1}", len(table.df.columns))
-                continue
-
-            table.df.dropna(thresh=2)  # Drop rows with just department data or central header
-
-            # Drop header columns
-            mask1 = table.df.loc[:,0] != "Employee Name"
-            table.df = table.df[mask1]
-            mask2 = table.df.loc[:,8] != "Proposed"
-            table.df = table.df[mask2]
-
-            # Add to master dataframe
-            if df.empty:
-                df = table.df
-            else:
-                df = pd.concat([df, table.df]).reset_index(drop=True)
-        
-        # Rename columns
-        df = pd.DataFrame({
-            "Name": df.loc[:,0], "Job Title": df.loc[:,1], "Total": df.loc[:,2], "Tenure": df.loc[:,3],"Employee Class": df.loc[:,4], 
-            "Present FTE": df.loc[:,5], "Proposed FTE": df.loc[:,6], "Present Salary": df.loc[:,7], "Proposed Salary": df.loc[:,8]
-        })
-
-        df.to_csv(f"converted/illinois/{year}.csv", index=False)
-
-        return len(df)
 
     else:
         # Read in the pdf file
@@ -829,7 +794,7 @@ def uf_scraper(pdf, year):
         for page in pdf.pages:
 
             if year < 2018:
-                # Find columns based on words in header
+                # Set college and department for page
                 words = page.extract_words()
                 col_1, col_2, col_3, col_4, col_5 = [None] * 5  # Initialize columns
                 for word in words[:50]:
@@ -838,7 +803,7 @@ def uf_scraper(pdf, year):
                             col_1 = word["x0"] - 60
                     elif "JOB" in word["text"]:
                         if col_2 is None:
-                            col_2 = word["x0"] - 65
+                            col_2 = word["x0"] + 25
                     elif "FTE" in word["text"]:
                         if col_3 is None:
                             col_3 = word["x0"] - 17
@@ -848,6 +813,25 @@ def uf_scraper(pdf, year):
                             col_5 = word["x1"] + 25
 
                 # Set column settings
+                table_settings = {
+                    "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5], 
+                    "horizontal_strategy": "text"
+                    }
+                
+                table = page.extract_table(table_settings=table_settings)
+
+                college = None
+                for row in table[:10]:  # Only check header rows
+                    if row[0] != "" and row[1:4] == [""] * 3:
+                        if college is None:  # First row is college
+                            college = row[0]
+                        else:
+                            dpt = row[0]
+                
+                # Adjust for employee data extraction
+                col_2 -= 90
+
+                # Set new column settings
                 table_settings = {
                     "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5], 
                     "horizontal_strategy": "text"
@@ -880,6 +864,8 @@ def uf_scraper(pdf, year):
                         continue  # Separator
 
                     employee = {"Name": row[0].title()}
+                    employee["College"] = college
+                    employee["Department"] = dpt
                     employee["Job Title"] = row[1]
                     try:
                         employee["Budget FTE"] = float(row[2].replace(",", ""))
@@ -933,9 +919,18 @@ def uf_scraper(pdf, year):
                 # Add observation
                 employees.append(employee)
 
-    # Create csv file
+    # Create csv file with complete data
     df = pd.DataFrame(employees)
     df.to_csv(f"converted/uf/uf-{year}.csv", index=False)
+
+    # Group by name and sum the salaries
+    grouped = df[df["Budget FTE"] < 1].groupby("Name").sum(["Budget FTE", "Current Rate"])
+    grouped.drop(index="College Total", inplace=True)
+    grouped.drop(index="Dept Total", inplace=True)
+    others = df[df["Budget FTE"] == 1].set_index("Name")
+    combined = pd.concat([others[["Budget FTE", "Current Rate"]], grouped])
+    combined.sort_index(inplace=True)
+    combined.to_csv("converted/uf/grouped-uf-2017.csv")
 
     return missed, len(df)
 
