@@ -390,7 +390,6 @@ def value_finder(employee, line):
 
 def graybook_missed_scraper(data):
     """Scrapes csv of missed observations"""
-    import pdfplumber
     import re
     import pandas as pd
 
@@ -794,28 +793,61 @@ def uf_scraper(pdf, year):
         for page in pdf.pages:
 
             if year < 2018:
-                # Set college and department for page
+                # Find columns based on words in header
                 words = page.extract_words()
-                col_1, col_2, col_3, col_4, col_5 = [None] * 5  # Initialize columns
-                for word in words[:50]:
+                col_1, col_2, col_3, col_4, col_5, col_6, col_7, col_8 = [None] * 8  # Initialize columns
+                for word in words[:70]:
                     if "NAME" in word["text"]:
                         if col_1 is None:  # Only use first occurance
-                            col_1 = word["x0"] - 60
+                            if year < 2008:
+                                col_1 = word["x0"] - 50
+                            else:
+                                col_1 = word["x0"] - 60
                     elif "JOB" in word["text"]:
                         if col_2 is None:
                             col_2 = word["x0"] + 25
+                    elif "TENURE" in word["text"]:
+                        if year < 2008 and col_3 is None:
+                            col_3 = word["x0"] - 67
+                            col_4 = word["x1"] + 73
+                    elif "PAY" in word["text"]:
+                        if year < 2004 and col_3 is None:
+                            col_3 = word["x0"] - 23
                     elif "FTE" in word["text"]:
-                        if col_3 is None:
+                        if year < 2004 and col_4 is None:
+                            col_4 = word["x0"] - 15
+                            col_5 = word["x1"] + 12
+                        elif year < 2008 and col_5 is None:
+                            col_5 = word["x0"] - 15
+                            col_6 = word["x1"] + 12
+                        elif year > 2007 and col_3 is None:
                             col_3 = word["x0"] - 17
                     elif "CURRENT" in word["text"]:
-                        if col_4 is None:
+                        if year < 2004 and col_6 is None:
+                            col_6 = word["x0"] - 23
+                            col_7 = word["x1"] + 23
+                        elif year < 2008 and col_7 is None:
+                            col_7 = word["x0"] - 23
+                            col_8 = word["x1"] + 23
+                        elif year > 2007 and col_4 is None:
                             col_4 = word["x0"] - 20
                             col_5 = word["x1"] + 25
 
                 # Set column settings
-                table_settings = {
-                    "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5], 
-                    "horizontal_strategy": "text"
+                if year < 2004:
+                    table_settings = {
+                        "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5, col_6, col_7], 
+                        "horizontal_strategy": "text"
+                    }
+                elif year < 2008:
+                    table_settings = {
+                        "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5, col_6, col_7, col_8], 
+                        "horizontal_strategy": "text"
+                    }
+                else:
+                    table_settings = {
+                        "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5], 
+                        "horizontal_strategy": "text"
                     }
                 
                 table = page.extract_table(table_settings=table_settings)
@@ -832,9 +864,20 @@ def uf_scraper(pdf, year):
                 col_2 -= 90
 
                 # Set new column settings
-                table_settings = {
-                    "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5], 
-                    "horizontal_strategy": "text"
+                if year < 2004:
+                    table_settings = {
+                        "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5, col_6, col_7], 
+                        "horizontal_strategy": "text"
+                    }
+                elif year < 2008:
+                    table_settings = {
+                        "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5, col_6, col_7, col_8], 
+                        "horizontal_strategy": "text"
+                    }
+                else:
+                    table_settings = {
+                        "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5], 
+                        "horizontal_strategy": "text"
                     }
             else:
                 # Set column settings
@@ -845,7 +888,7 @@ def uf_scraper(pdf, year):
 
             table = page.extract_table(table_settings=table_settings)
 
-            if year < 2018:
+            if 2007 < year < 2018:
                 if len(table[0]) != 4:  # Fix columns if not producing 4 rows
                     col_1 += 60
                     table_settings = {
@@ -855,7 +898,82 @@ def uf_scraper(pdf, year):
                     table = page.extract_table(table_settings=table_settings)
 
             for row in table:
-                if year < 2018:
+                if year == 2003:
+                    if row[0] == "" or row[0] == "NAME":
+                        continue  # Header or empty
+                    if row[0] != "" and row[1:6] == [""] * 5:
+                        continue  # Faculty or staff
+                    if row[:1] != "" and row[2:6] == [""] * 4:
+                        continue  # College/department 
+                    if "-----" in row[0]:
+                        continue  # Separator
+
+                    employee = {"Name": row[0].title()}
+                    employee["College"] = college
+                    employee["Department"] = dpt
+                    employee["Job Title"] = row[1]
+                    employee["Pay Source"] = row[2]
+                    try:
+                        employee["Budget FTE"] = float(row[3].replace(",", ""))
+                    except AttributeError:
+                        employee["Budget FTE"] = row[3]
+                        missed.append(row)
+                    try:
+                        employee["Person Years"] = float(row[4].replace(",", ""))
+                    except AttributeError:
+                        employee["Person Years"] = row[4]
+                        missed.append(row)
+                    try:
+                        employee["Current Rate"] = float(row[5].replace(",", ""))
+                    except AttributeError:
+                        employee["Current Rate"] = row[5]
+                        missed.append(row)
+
+                elif year < 2008:
+                    if row[0] == "" or row[0] == "NAME":
+                        continue  # Header or empty
+                    if row[0] != "" and row[1:7] == [""] * 6:
+                        continue  # Faculty or staff
+                    if row[:1] != "" and row[2:7] == [""] * 5:
+                        continue  # College/department 
+                    if "-----" in row[0]:
+                        continue  # Separator
+
+                    employee = {"Name": row[0].title()}
+                    employee["College"] = college
+                    employee["Department"] = dpt
+                    employee["Job Title"] = row[1]
+                    employee["Tenure Department"] = row[2]
+                    employee["Pay Source"] = row[3]
+                    try:
+                        employee["Budget FTE"] = float(row[4].replace(",", ""))
+                    except AttributeError:
+                        employee["Budget FTE"] = row[4]
+                        missed.append(row)
+                    except ValueError:
+                        if "+" in row[4]:
+                            grand_total = row[4].lstrip("+") + row[6]
+                            try:
+                                employee["Current Rate"] = float(grand_total.replace(",", ""))
+                            except AttributeError:
+                                employee["Current Rate"] = grand_total
+                                missed.append(row)
+                            employees.append(employee)
+                            continue
+                        else:
+                            missed.append(row)
+                    try:
+                        employee["Person Years"] = float(row[5].replace(",", ""))
+                    except AttributeError:
+                        employee["Person Years"] = row[5]
+                        missed.append(row)
+                    try:
+                        employee["Current Rate"] = float(row[6].replace(",", ""))
+                    except AttributeError:
+                        employee["Current Rate"] = row[6]
+                        missed.append(row)
+
+                elif 2008 < year < 2018:
                     if row[0] == "" or row[0] == "NAME":
                         continue  # Header or empty
                     if row[2] == "" and row[3] == "":
@@ -922,20 +1040,41 @@ def uf_scraper(pdf, year):
     # Create dataframe with all employee data
     df = pd.DataFrame(employees)
 
-    # Group by name and sum the salaries
-    grouped = df[df["Budget FTE"] < 1].groupby("Name").sum(["Budget FTE", "Current Rate"])
-    grouped.drop(index="College Total", inplace=True)
-    grouped.drop(index="Dept Total", inplace=True)
-    others = df[df["Budget FTE"] == 1].set_index("Name")
-    others.drop(index="Dept Total", inplace=True)
-    combined = pd.concat([others[["Budget FTE", "Current Rate"]], grouped])
-    combined.rename(columns={"Budget FTE": "Total Fraction", "Current Rate": "Total Rate"}, inplace=True)
+    if 2002 < year < 2008:
+        # First collect all employees who have fractional appointments
+        fractional = df[df["Budget FTE"] != 1].copy()
+        to_merge = fractional[["Name", "College", "Department", "Job Title", "Pay Source", "Budget FTE"]]
+        to_merge.set_index("Name", inplace=True)
+        to_merge.drop(index=["Mon-Appt Total", "Payplan Total", "Dept Total", "College Total"], inplace=True)
 
-    # Megre back to complete data and write csv
-    df = pd.merge(df, combined, how="left", on="Name")
+        # Then determine their primary job based on highest fraction
+        primary = fractional.groupby("Name", sort=False)["Budget FTE"].max()
+        primary.drop(index=["Mon-Appt Total", "Payplan Total", "Dept Total", "College Total"], inplace=True)
+
+        # Merge the two to get their primary job
+        merge_1 = pd.merge(to_merge, primary, how="right", on=["Name", "Budget FTE"])
+
+        # Remove the partial fraction since we will want the final data to display the fractional sum
+        merge_1.drop(columns="Budget FTE", inplace=True)
+
+        # Now compute their total salary and add it back in
+        total_salary = fractional.groupby("Name", sort=False)[["Budget FTE", "Current Rate"]].sum()
+        merge_2 = pd.merge(merge_1, total_salary, how="left", on=["Name"])
+
+        # Now collect all other employees
+        other_employees = df[df["Budget FTE"] == 1].copy()
+        other_employees.drop(columns="Person Years", inplace=True)
+        other_employees.set_index("Name", inplace=True)
+        other_employees.drop(index=["Mon-Appt Total", "Payplan Total", "Dept Total", "College Total"], inplace=True)
+
+        # Combine the two dataframes to get all employees
+        df = pd.concat([merge_2, other_employees])
+        df.sort_index(inplace=True)
+
+    # Write csv
     df.to_csv(f"converted/uf/uf-{year}.csv", index=False)
 
-    return missed, len(df)
+    return df
 
 
 def get_azure_data(file):
