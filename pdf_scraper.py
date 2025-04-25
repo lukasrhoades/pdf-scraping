@@ -1,3 +1,5 @@
+"""Functions to scrape PDFs for tabular salary data"""
+
 def graybook_scraper(pdf, year):
     """Scrapes graybook pdf and returns csv file"""
     from PyPDF2 import PdfReader, PdfWriter
@@ -900,14 +902,16 @@ def uf_scraper(pdf, year):
             for row in table:
                 if year == 2003:
                     if row[0] == "" or row[0] == "NAME":
-                        continue  # Header or empty
+                        continue  # Header, empty, or non-salary
                     if row[0] != "" and row[1:6] == [""] * 5:
                         continue  # Faculty or staff
                     if row[:1] != "" and row[2:6] == [""] * 4:
                         continue  # College/department 
                     if "-----" in row[0]:
                         continue  # Separator
-
+                    if row[2] != "SALARY":
+                        continue  # Non-salary
+                    
                     employee = {"Name": row[0].title()}
                     employee["College"] = college
                     employee["Department"] = dpt
@@ -931,14 +935,16 @@ def uf_scraper(pdf, year):
 
                 elif year < 2008:
                     if row[0] == "" or row[0] == "NAME":
-                        continue  # Header or empty
+                        continue  # Header, empty, or nonstaff
                     if row[0] != "" and row[1:7] == [""] * 6:
                         continue  # Faculty or staff
                     if row[:1] != "" and row[2:7] == [""] * 5:
                         continue  # College/department 
                     if "-----" in row[0]:
                         continue  # Separator
-
+                    if row[3] != "SALARY":
+                        continue  # Non-salary
+                    
                     employee = {"Name": row[0].title()}
                     employee["College"] = college
                     employee["Department"] = dpt
@@ -973,15 +979,17 @@ def uf_scraper(pdf, year):
                         employee["Current Rate"] = row[6]
                         missed.append(row)
 
-                elif 2008 < year < 2018:
+                elif 2007 < year < 2018:
                     if row[0] == "" or row[0] == "NAME":
                         continue  # Header or empty
                     if row[2] == "" and row[3] == "":
                         continue  # College/department
                     if "-----" in row[0]:
                         continue  # Separator
-
-                    employee = {"Name": row[0].title()}
+                    if row[1] == "":
+                        continue  # Total
+                    
+                    employee = {"Name": row[2].title()}
                     employee["College"] = college
                     employee["Department"] = dpt
                     employee["Job Title"] = row[1]
@@ -1012,26 +1020,24 @@ def uf_scraper(pdf, year):
                     if "College or Area" in row[0]:
                         continue  # Header row
                     elif row[0] != "":
-                        college_area = row[0]
-                        department = row[1]
+                        college_area = row[0].replace("\n", " ")
+                        department = row[1].replace("\n", " ")
 
-                    try:
-                        name_match = re.match(r"(.*),(.*)", row[2])
-                        employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
-                    except AttributeError:
-                        employee = {"Name": row[2]}
+                    employee = {"Name": row[2].replace(",", "").replace("\n", " ").title()}
+                    if employee["Name"] == "":  # Total
+                        continue
                     employee["College"] = college_area
                     employee["Department"] = department
-                    employee["Job Title"] = row[3]
+                    employee["Job Title"] = row[3].replace("\n", " ")
                     try:
                         employee["Budget FTE"] = float(row[4].replace(",", ""))
                     except ValueError:
                         employee["Budget FTE"] = row[4]
                         missed.append(row)
                     try:
-                        employee["Annual Compensation"] = float(row[5].lstrip("$").replace(",", ""))
+                        employee["Current Rate"] = float(row[5].lstrip("$").replace(",", ""))
                     except ValueError:
-                        employee["Annual Compensation"] = row[5]
+                        employee["Current Rate"] = row[5]
                         missed.append(row)
                 
                 # Add observation
@@ -1040,16 +1046,15 @@ def uf_scraper(pdf, year):
     # Create dataframe with all employee data
     df = pd.DataFrame(employees)
 
+    # Handle fractional appointments
     if 2002 < year < 2008:
         # First collect all employees who have fractional appointments
         fractional = df[df["Budget FTE"] != 1].copy()
         to_merge = fractional[["Name", "College", "Department", "Job Title", "Pay Source", "Budget FTE"]]
         to_merge.set_index("Name", inplace=True)
-        to_merge.drop(index=["Mon-Appt Total", "Payplan Total", "Dept Total", "College Total"], inplace=True)
 
         # Then determine their primary job based on highest fraction
         primary = fractional.groupby("Name", sort=False)["Budget FTE"].max()
-        primary.drop(index=["Mon-Appt Total", "Payplan Total", "Dept Total", "College Total"], inplace=True)
 
         # Merge the two to get their primary job
         merge_1 = pd.merge(to_merge, primary, how="right", on=["Name", "Budget FTE"])
@@ -1064,17 +1069,44 @@ def uf_scraper(pdf, year):
         # Now collect all other employees
         other_employees = df[df["Budget FTE"] == 1].copy()
         other_employees.drop(columns="Person Years", inplace=True)
+        if year != 2003:
+            other_employees.drop(columns="Tenure Department", inplace=True)
         other_employees.set_index("Name", inplace=True)
-        other_employees.drop(index=["Mon-Appt Total", "Payplan Total", "Dept Total", "College Total"], inplace=True)
+
+        # Combine the two dataframes to get all employees
+        df = pd.concat([merge_2, other_employees])
+        df.sort_index(inplace=True)
+    else:
+        # First collect all employees who have fractional appointments
+        fractional = df[df["Budget FTE"] != 1].copy()
+        to_merge = fractional[["Name", "College", "Department", "Job Title", "Budget FTE"]]
+        to_merge.set_index("Name", inplace=True)
+
+        # Then determine their primary job based on highest fraction
+        primary = fractional.groupby("Name", sort=False)["Budget FTE"].max()
+
+        # Merge the two to get their primary job
+        merge_1 = pd.merge(to_merge, primary, how="right", on=["Name", "Budget FTE"])
+
+        # Remove the partial fraction since we will want the final data to display the fractional sum
+        merge_1.drop(columns="Budget FTE", inplace=True)
+
+        # Now compute their total salary and add it back in
+        total_salary = fractional.groupby("Name", sort=False)[["Budget FTE", "Current Rate"]].sum()
+        merge_2 = pd.merge(merge_1, total_salary, how="left", on=["Name"])
+
+        # Now collect all other employees
+        other_employees = df[df["Budget FTE"] == 1].copy()
+        other_employees.set_index("Name", inplace=True)
 
         # Combine the two dataframes to get all employees
         df = pd.concat([merge_2, other_employees])
         df.sort_index(inplace=True)
 
     # Write csv
-    df.to_csv(f"converted/uf/uf-{year}.csv", index=False)
+    df.to_csv(f"converted/uf/uf-{year}.csv")
 
-    return df
+    return missed, len(df)
 
 
 def get_azure_data(file):
