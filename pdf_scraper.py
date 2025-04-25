@@ -989,7 +989,7 @@ def uf_scraper(pdf, year):
                     if row[1] == "":
                         continue  # Total
                     
-                    employee = {"Name": row[2].title()}
+                    employee = {"Name": row[0].title()}
                     employee["College"] = college
                     employee["Department"] = dpt
                     employee["Job Title"] = row[1]
