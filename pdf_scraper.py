@@ -1,6 +1,6 @@
 """Functions to scrape PDFs for tabular salary data"""
 
-def graybook_scraper(pdf, year):
+def graybook_scraper(file, year):
     """Scrapes graybook pdf and returns csv file"""
     from PyPDF2 import PdfReader, PdfWriter
     import pdfplumber
@@ -15,9 +15,9 @@ def graybook_scraper(pdf, year):
 
     if year == 1990:
         # Read in the pdf file
-        with pdfplumber.open(pdf) as mario:
+        with pdfplumber.open(file) as pdf:
             # Iterate through each page
-            for i, page in enumerate(mario.pages):  
+            for i, page in enumerate(pdf.pages):  
                 # Find columns based on words in header
                 words = page.extract_words()
                 try:
@@ -68,7 +68,7 @@ def graybook_scraper(pdf, year):
 
                         # Make API call
                         try:
-                            table = get_azure_data("temp.pdf")
+                            table = get_azure_data("temp.pdf", "Illinois")
                         except IndexError:  # No tables detected
                             print(page)
                             continue
@@ -167,7 +167,7 @@ def graybook_scraper(pdf, year):
                     continue
     elif 2003 < year < 2007:
         # Read in the pdf file
-        with pdfplumber.open(pdf) as pdf:
+        with pdfplumber.open(file) as pdf:
             # Iterate through each page
             for page in pdf.pages:
                 table = page.extract_table(table_settings={
@@ -223,9 +223,159 @@ def graybook_scraper(pdf, year):
                 except TypeError:
                     print(year, page)
 
+    elif year < 2024:
+        # Read in the pdf file
+        with pdfplumber.open(file) as pdf:
+            
+            grab_name = False  # This is used for getting second part of name
+
+            # Iterate through each page
+            for page in pdf.pages:
+                # Initialize columns
+                col_1, col_2, col_3, col_4, col_5, col_6, col_7, col_8, col_9 = [None] * 9
+
+                # Find columns based on words in header
+                words = page.extract_words()
+                for word in words[:50]:
+                    if "Employee" in word["text"]:
+                        if col_1 is None:
+                            col_1 = word["x0"] - 1
+                    elif "Job" in word["text"]:
+                        if col_2 is None:
+                            col_2 = word["x0"] - 1
+                    elif "Tenure" in word["text"]:
+                        if col_3 is None:
+                            col_3 = word["x0"] + 10
+                            col_4 = word["x1"] + 15
+                    elif "Present" in word["text"]:
+                        if col_5 is None:  # Only use first occurance
+                            col_5 = word["x0"] - 5
+                    elif "Proposed" in word["text"]:
+                        if col_6 is None:
+                            col_6 = word["x0"] - 3
+                    elif "Salary" in word["text"]:
+                        if col_7 is None:
+                            col_7 = word["x0"] - 17
+                            col_8 = word["x1"] + 17
+                            col_9 = word["x1"] + 70
+                    
+                # Set column settings
+                table_settings = {
+                    "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5, col_6, col_7, col_8, col_9],
+                    "horizontal_strategy": "text"
+                }
+
+                try:
+                    table = page.extract_table(table_settings=table_settings)
+                except TypeError:
+                    print(year, page)
+                    continue  # Not a page with employee data
+
+                for row in table:
+                    if grab_name is True:  # Second part of name
+                        employees.pop(-1)
+                        employee["Name"] += row[0]
+                        name_match = re.match(r"(.*),(.*)", employee["Name"])
+                        employee["Name"] = name_match.group(2).strip() + " " + name_match.group(1).strip()
+                        employees.append(employee)
+                        grab_name = False
+                        continue
+                    if "August" and f"{year}" in row[0]:
+                        continue  # Header
+                    if "Employee Name" in row[0]:
+                        continue  # Header
+                    if row[0] == "" and row[1] == "":
+                        continue  # Not a row with employee data
+                    if "$" not in row[-1]:
+                        continue  # Not a row with salary data
+                    
+                    if year < 2020:
+                        if row[1] != "Employee":  # Not total
+                            if row[0] != "" and row[0].strip()[-1] == ",":  # Need second part of name
+                                employee = {"Name": row[0]}
+                                grab_name = True
+                            else:
+                                try:
+                                    if row[0] != "":  # First job
+                                        name_match = re.match(r"(.*),(.*)", row[0])
+                                    # Otherwise, second job
+                                    employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                                except AttributeError:
+                                    if row[0] == "":  # Second job
+                                        employee = {"Name": name}
+                                    employee = {"Name": row[0]}
+                                    name = row[0]  # If match fails first time, will probably fail again so save it
+                                    missed.append(row)
+                            employee["Job Title"] = row[1]
+                            employee["Tenure"] = row[2]
+                            employee["Employee Class"] = row[3]
+                            try:
+                                employee["Present FTE"] = float(row[4])
+                            except ValueError:
+                                employee["Present FTE"] = row[4]
+                                missed.append(row)
+                            try:
+                                employee["Proposed FTE"] = float(row[5])
+                            except ValueError:
+                                employee["Proposed FTE"] = row[5]
+                                missed.append(row)
+                            try:
+                                employee["Present Salary"] = float(row[6].lstrip("$").replace(",", ""))
+                            except ValueError:
+                                employee["Present Salary"] = row[6]
+                                missed.append(row)
+                            if year == 2013 and row[0] == "Becker, Bryan":
+                                employee["Proposed Salary"] = float(row[7].lstrip("0 $").replace(",", ""))
+                            else:
+                                try:
+                                    employee["Proposed Salary"] = float(row[7].lstrip("(").lstrip("$").rstrip(")").replace(",", ""))
+                                except ValueError:
+                                    employee["Proposed Salary"] = row[7]
+                                    missed.append(row)
+                        elif row[1] == "Employee":  # Employee total
+                            continue  # Will calculate later
+                    else:
+                        if row[1] != "Employee":  # Not total
+                            if row[0].strip()[-1] == ",":  # Need second part of name
+                                employee = {"Name": row[0]}
+                                grab_name = True
+                            else:
+                                try:
+                                    name_match = re.match(r"(.*),(.*)", row[0])
+                                    employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                                except AttributeError:
+                                    employee = {"Name": row[0]}
+                                    missed.append(row)
+                            employee["Job Title"] = row[1]
+                            employee["Tenure"] = row[2]
+                            employee["Employee Class"] = row[3]
+                            try:
+                                employee["Present FTE"] = float(row[4])
+                            except ValueError:
+                                employee["Present FTE"] = row[4]
+                                missed.append(row)
+                            try:
+                                employee["Proposed FTE"] = float(row[5])
+                            except ValueError:
+                                employee["Proposed FTE"] = row[5]
+                                missed.append(row)
+                            try:
+                                employee["Present Salary"] = float(row[6].lstrip("$").replace(",", ""))
+                            except ValueError:
+                                employee["Present Salary"] = row[6]
+                                missed.append(row)
+                            try:
+                                employee["Proposed Salary"] = float(row[7].lstrip("$").replace(",", ""))
+                            except ValueError:
+                                employee["Proposed Salary"] = row[7]
+                                missed.append(row)
+                        elif row[1] == "Employee":  # Employee total
+                            continue  # Will calculate later
+                    
+                    employees.append(employee)  # Add row of employee data
     else:
         # Read in the pdf file
-        reader = PdfReader(pdf)
+        reader = PdfReader(file)
 
         broken = False
 
@@ -362,10 +512,52 @@ def graybook_scraper(pdf, year):
                                 continue
                             if employee and "Job Title" in employee:
                                 employees.append(employee)
-    
-    # Create csv file
-    df = pd.DataFrame(employees)
-    df.to_csv(f"converted/illinois/{year}.csv", index=False)
+
+    # Handle fractional appointments
+    if 2006 < year < 2024:
+        # Create dataframe with all employee data
+        df = pd.DataFrame(employees)
+
+        # Groupby name and then filter out groupings of different people
+        salaries = df.groupby("Name", sort=False)
+        salaries = salaries.filter(lambda x: x["Present FTE"].sum() <= 1.00)
+
+        # Grab the index of those who were grouped after filtering
+        filter = salaries.index
+
+        # Then set index to be the name
+        salaries.set_index("Name", inplace=True)
+
+        # Collect all the employee information across appointments and merge them together 
+        jobs = df.loc[filter,:].groupby("Name", sort=False)["Job Title"].apply(lambda x: " and ".join(x))
+        tenure = df.loc[filter,:].groupby("Name", sort=False)["Tenure"].apply(lambda x: " and ".join(x))
+        employee_class = df.loc[filter,:].groupby("Name", sort=False)["Employee Class"].apply(lambda x: " and ".join(x))
+        merge1 = pd.merge(jobs, tenure, on="Name")
+        merge2 = pd.merge(merge1, employee_class, on="Name")
+
+        # Now sum the FTE's and salaries and merge again
+        salaries = salaries.iloc[:,3:].groupby("Name", sort=False).sum()
+        merge3 = pd.merge(merge2, salaries, on="Name")
+        
+        # Grab the names of those whose salaries have been summed
+        names = salaries.index
+
+        # Now grab the complete data for everyone else
+        mask = df["Name"].isin(names)
+        others = df.loc[~mask,:].set_index("Name")
+
+        # Final merge for all the data and sort the data
+        merge4 = pd.concat([merge3, others])
+        merge4.sort_index(inplace=True)
+
+        # Write csv file
+        merge4.to_csv(f"converted/illinois/{year}.csv")
+
+        return missed, len(df)
+    else:
+        # Create csv file
+        df = pd.DataFrame(employees)
+        df.to_csv(f"converted/illinois/{year}.csv", index=False)
 
     return missed, len(df)
 
@@ -463,14 +655,15 @@ def graybook_missed_scraper(data):
     return df
 
 
-def mich_scraper(pdf, year):
+def mich_scraper(file, year):
     """Scrapes Mich pdf and returns csv file"""
     import pdfplumber
+    from PyPDF2 import PdfReader, PdfWriter
     import re
     import pandas as pd
 
     # Read in the pdf file
-    with pdfplumber.open(pdf) as pdf:
+    with pdfplumber.open(file) as pdf:
 
         # List to store dictionaries of values for each employee
         employees = []
@@ -478,7 +671,82 @@ def mich_scraper(pdf, year):
         # List to store missed rows
         missed = []
 
-        if year < 2008:  # Header data only on first page
+        if year < 2002:
+            # 2001 is a work in progress, requires Azure due to page warping
+            reader = PdfReader(file)
+
+            if year < 2001:
+                table_settings = {
+                    "explicit_vertical_lines": [73, 195, 320, 425, 480, 525, 565, 660],
+                    "horizontal_strategy": "text",
+                }
+
+            for idx, page in enumerate(pdf.pages):
+                # Rotate page
+                rotated_page = reader.pages[idx]
+                rotated_page.rotate(90)
+                writer = PdfWriter()
+                writer.add_page(rotated_page)
+                with open("rotated_temp.pdf", "wb") as temp:
+                    writer.write(temp)
+                pdf = pdfplumber.open("rotated_temp.pdf")
+                page = pdf.pages[0]  # Only one page
+
+                # Check if has actual data
+                words = page.extract_words()
+                if len(words) < 50:
+                    continue  # Blank page
+                if year == "2001" and idx == 0:
+                    continue  # CCA page
+                
+                if year == 2001:
+                    # Extract from Azure
+                    try:  # Make API call
+                        table = get_azure_data("rotated_temp.pdf", "UMich")
+                    except IndexError:  # No tables detected
+                        print(page)
+                        continue
+                else:
+                    table = page.extract_table(table_settings=table_settings)
+                
+                if len(table[0]) != 7:
+                    print(idx)  # Page without employee data
+                    continue
+                
+                for row in table:
+                    if "NAME" in row[0]:
+                        continue  # Header
+                    if row[0] == "":
+                        continue
+
+                    try:
+                        name_match = re.match(r"(.*),(.*)", row[0])
+                        employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    except AttributeError:
+                        employee = {"Name": row[0]}
+                    employee["Appointment Title"] = row[1]
+                    employee["Appointing Department"] = row[2]
+                    try:
+                        employee["Annnual FTR"] = float(row[3].replace(",", ""))
+                    except ValueError:
+                        employee["Annnual FTR"] = row[3]
+                        missed.append(row)
+                    employee["FTR Basis"] = row[4]
+                    try:
+                        employee["Fraction"] = float(row[5])
+                    except ValueError:
+                        employee["Fraction"] = row[5]
+                        missed.append(row)
+                    try:
+                        employee["General Fund Amount"] = float(row[6].replace(",", ""))
+                    except ValueError:
+                        employee["General Fund Amount"] = row[6]
+                        missed.append(row)
+
+                    # Add employee
+                    employees.append(employee)
+
+        elif year < 2008:  # Header data only on first page
             # Find page with the header data
             page = pdf.pages[0]
 
@@ -633,141 +901,142 @@ def mich_scraper(pdf, year):
                 "horizontal_strategy": "text"
             }
 
-        # Iterate through each page
-        for page in pdf.pages:
-            if year < 2008 or 2016 < year < 2019:
-                pass  # Already set master settings for whole document above
+        if year > 2001:
+            # Iterate through each page
+            for page in pdf.pages:
+                if year < 2008 or 2016 < year < 2019:
+                    pass  # Already set master settings for whole document above
 
-            # Determine the column settings for optimal scraping
-            else:
-                # Fetch all vertical edges and sort by x-coordinates
-                edges = page.edges
-                vertical_edges = [e for e in edges if e["orientation"] == "v"]
-                x_coords = sorted(set([e["x0"] for e in vertical_edges]))
+                # Determine the column settings for optimal scraping
+                else:
+                    # Fetch all vertical edges and sort by x-coordinates
+                    edges = page.edges
+                    vertical_edges = [e for e in edges if e["orientation"] == "v"]
+                    x_coords = sorted(set([e["x0"] for e in vertical_edges]))
 
-                # Find columns based on words in header
-                words = page.extract_words()
-                for word in words[:55]:
-                    if "NAME" in word["text"]:
-                        if year > 2008:
-                            col_2 = word["x0"] - 1
-                        else:
-                            col_2 = word["x0"] - 57
-                    elif "APPOINTMENT" in word["text"]:
-                        if year > 2008:
-                            col_3 = word["x0"] - 1
-                        else:
-                            col_3 = word["x0"] - 35
-                    elif "APPOINTING" in word["text"]:
-                        if year > 2008:
-                            col_4 = word["x0"] - 1
-                        else:
-                            col_4 = word["x0"] - 37
-                    elif "FTR" in word["text"]:
-                        if 2009 < year < 2012:
-                            col_5 = word["x0"] - 27
-                        elif year == 2012 or year == 2015:
-                            col_5 = word["x0"] - 35
-                        elif 2012 < year < 2015 or year == 2016:
-                            col_5 = word["x0"] - 15
-                        elif 2019 < year < 2022:
-                            col_5 = word["x0"] - 1
-                        else:
-                            col_5 = word["x0"] - 6
-                    elif "BASIS" in word["text"]:
-                        if year == 2009:
-                            col_6 = word["x0"] - 8
-                        elif year == 2010:
-                            col_6 = word["x0"] - 10
-                        elif 2010 < year < 2015:
-                            col_6 = word["x0"] - 5
-                        elif year == 2008 or year == 2019:
-                            col_6 = word["x0"] - 12
-                        else:
-                            col_6 = word["x0"] - 1
-                    elif "FRACTION" in word["text"]:
-                        col_7 = word["x0"] + 5
-                    elif "FUND" in word["text"]:
-                        if year < 2013:
-                            col_8 = word["x0"] - 15
-                        elif year < 2017:
-                            col_8 = word["x0"] - 10
-                        else:
-                            col_8 = word["x0"]
-
-                try:
-                    # Set column settings
-                    table_settings = {
-                        "explicit_vertical_lines": [x_coords[0], col_2, col_3, col_4, col_5, col_6, col_7, col_8, x_coords[-1]],
-                        "horizontal_strategy": "text"
-                    }
-                except UnboundLocalError:
-                    print(year, page)
-                    continue
-
-            table = page.extract_table(table_settings=table_settings)
-
-            re_match = False  # In case first name is on a second row
-
-            for row in table:
-                if "UM_" not in row[0]:
-                    if 2007 < year < 2012 and row[0] == "":
-                        if row[1] != "Name" and row[1] != "":  # Second part of name
-                            employee = employees.pop(-1)
-                            if employee["Name"][-1] == "-":
-                                employee["Name"] += row[1]
+                    # Find columns based on words in header
+                    words = page.extract_words()
+                    for word in words[:55]:
+                        if "NAME" in word["text"]:
+                            if year > 2008:
+                                col_2 = word["x0"] - 1
                             else:
-                                employee["Name"] += " " + row[1]
-                            
-                            if re_match:
-                                name_match = re.match(r"(.*),(.*)", employee["Name"])
-                                employee["Name"] = name_match.group(2).strip() + " " + name_match.group(1).strip()
-                            employees.append(employee)
-                            re_match = False
-                    continue  # Not a row with employee data
-                try:
-                    name_match = re.match(r"(.*),(.*)", row[1])
-                    employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
-                except AttributeError:
-                    if year < 2012:
-                        employee = {"Name": row[1]}
-                        re_match = True
-                    else:
-                        print(row)
-                        missed.append(row)
+                                col_2 = word["x0"] - 57
+                        elif "APPOINTMENT" in word["text"]:
+                            if year > 2008:
+                                col_3 = word["x0"] - 1
+                            else:
+                                col_3 = word["x0"] - 35
+                        elif "APPOINTING" in word["text"]:
+                            if year > 2008:
+                                col_4 = word["x0"] - 1
+                            else:
+                                col_4 = word["x0"] - 37
+                        elif "FTR" in word["text"]:
+                            if 2009 < year < 2012:
+                                col_5 = word["x0"] - 27
+                            elif year == 2012 or year == 2015:
+                                col_5 = word["x0"] - 35
+                            elif 2012 < year < 2015 or year == 2016:
+                                col_5 = word["x0"] - 15
+                            elif 2019 < year < 2022:
+                                col_5 = word["x0"] - 1
+                            else:
+                                col_5 = word["x0"] - 6
+                        elif "BASIS" in word["text"]:
+                            if year == 2009:
+                                col_6 = word["x0"] - 8
+                            elif year == 2010:
+                                col_6 = word["x0"] - 10
+                            elif 2010 < year < 2015:
+                                col_6 = word["x0"] - 5
+                            elif year == 2008 or year == 2019:
+                                col_6 = word["x0"] - 12
+                            else:
+                                col_6 = word["x0"] - 1
+                        elif "FRACTION" in word["text"]:
+                            col_7 = word["x0"] + 5
+                        elif "FUND" in word["text"]:
+                            if year < 2013:
+                                col_8 = word["x0"] - 15
+                            elif year < 2017:
+                                col_8 = word["x0"] - 10
+                            else:
+                                col_8 = word["x0"]
+
+                    try:
+                        # Set column settings
+                        table_settings = {
+                            "explicit_vertical_lines": [x_coords[0], col_2, col_3, col_4, col_5, col_6, col_7, col_8, x_coords[-1]],
+                            "horizontal_strategy": "text"
+                        }
+                    except UnboundLocalError:
+                        print(year, page)
                         continue
-                if year == 2004:
-                     employee["Campus"] = row[0].lstrip('"UM_')
-                else:
-                    employee["Campus"] = row[0].lstrip("UM_")
-                employee["Appointment Title"] = row[2]
-                employee["Appointing Department"] = row[3]
-                try:
-                    employee["Annnual FTR"] = float(row[4].replace(",", ""))
-                except ValueError:
-                    employee["Annnual FTR"] = row[4]
-                    missed.append(row)
-                employee["FTR Basis"] = row[5]
-                try:
-                    employee["Fraction"] = float(row[6])
-                except ValueError:
-                    employee["Fraction"] = row[6]
-                    missed.append(row)
-                if year == 2004:
+
+                table = page.extract_table(table_settings=table_settings)
+
+                re_match = False  # In case first name is on a second row
+
+                for row in table:
+                    if "UM_" not in row[0]:
+                        if 2007 < year < 2012 and row[0] == "":
+                            if row[1] != "Name" and row[1] != "":  # Second part of name
+                                employee = employees.pop(-1)
+                                if employee["Name"][-1] == "-":
+                                    employee["Name"] += row[1]
+                                else:
+                                    employee["Name"] += " " + row[1]
+                                
+                                if re_match:
+                                    name_match = re.match(r"(.*),(.*)", employee["Name"])
+                                    employee["Name"] = name_match.group(2).strip() + " " + name_match.group(1).strip()
+                                employees.append(employee)
+                                re_match = False
+                        continue  # Not a row with employee data
                     try:
-                        employee["General Fund Amount"] = float(row[7].rstrip('"').replace(",", ""))
-                    except ValueError:
-                        employee["General Fund Amount"] = row[7].rstrip('"')
-                        missed.append(row)
-                else:
+                        name_match = re.match(r"(.*),(.*)", row[1])
+                        employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                    except AttributeError:
+                        if year < 2012:
+                            employee = {"Name": row[1]}
+                            re_match = True
+                        else:
+                            print(row)
+                            missed.append(row)
+                            continue
+                    if year == 2004:
+                        employee["Campus"] = row[0].lstrip('"UM_')
+                    else:
+                        employee["Campus"] = row[0].lstrip("UM_")
+                    employee["Appointment Title"] = row[2]
+                    employee["Appointing Department"] = row[3]
                     try:
-                        employee["General Fund Amount"] = float(row[7].replace(",", ""))
+                        employee["Annnual FTR"] = float(row[4].replace(",", ""))
                     except ValueError:
-                        employee["General Fund Amount"] = row[7]
+                        employee["Annnual FTR"] = row[4]
                         missed.append(row)
-                
-                # Add employee
-                employees.append(employee)
+                    employee["FTR Basis"] = row[5]
+                    try:
+                        employee["Fraction"] = float(row[6])
+                    except ValueError:
+                        employee["Fraction"] = row[6]
+                        missed.append(row)
+                    if year == 2004:
+                        try:
+                            employee["General Fund Amount"] = float(row[7].rstrip('"').replace(",", ""))
+                        except ValueError:
+                            employee["General Fund Amount"] = row[7].rstrip('"')
+                            missed.append(row)
+                    else:
+                        try:
+                            employee["General Fund Amount"] = float(row[7].replace(",", ""))
+                        except ValueError:
+                            employee["General Fund Amount"] = row[7]
+                            missed.append(row)
+                    
+                    # Add employee
+                    employees.append(employee)
        
     # Create csv file
     df = pd.DataFrame(employees)
@@ -776,14 +1045,14 @@ def mich_scraper(pdf, year):
     return missed, len(df)
 
 
-def uf_scraper(pdf, year):
+def uf_scraper(file, year):
     """Scrapes UF salary data pdf and returns csv"""
     import pdfplumber
     import re
     import pandas as pd
 
     # Read in the pdf file
-    with pdfplumber.open(pdf) as pdf:
+    with pdfplumber.open(file) as pdf:
 
         # List to store dictionaries of values for each employee
         employees = []
@@ -1109,7 +1378,7 @@ def uf_scraper(pdf, year):
     return missed, len(df)
 
 
-def get_azure_data(file):
+def get_azure_data(file, school):
     """Uses Azure Document Intelligence to retrieve data when column identifiers fail"""
     import codes
     import base64
@@ -1133,7 +1402,7 @@ def get_azure_data(file):
     )
     result = poller.result()
 
-    table = result.tables[0]
+    table = result.tables[-1]
 
     # Convert to pandas dataframe
     matrix = [["" for _ in range(table.column_count)] for _ in range(table.row_count)]
@@ -1146,14 +1415,15 @@ def get_azure_data(file):
     df = pd.DataFrame(matrix)
 
     # Get rid of extra rows if there are any
-    if len(df.columns) > 6:
-        if len(df.columns) == 8:
-            df = pd.DataFrame({
-                "0": df[0] + df[1], "1": df[2] + df[3], "2": df[4], "3": df[5], "4": df[6], "5": df[7]
-            })
-        else:
-            print(len(df.columns))
-            raise ValueError
+    if school == "Illinois":
+        if len(df.columns) > 6:
+            if len(df.columns) == 8:
+                df = pd.DataFrame({
+                    "0": df[0] + df[1], "1": df[2] + df[3], "2": df[4], "3": df[5], "4": df[6], "5": df[7]
+                })
+            else:
+                print(len(df.columns))
+                raise ValueError
 
     # Then convert to table to use in scraper
     table = []

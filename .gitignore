@@ -16,6 +16,7 @@ missed_illinois_1990.csv
 testing_merged_2003.csv
 table_debug*
 ~*
+test*
 *.xlsx
 rotated_temp.pdf
 pdf_scrape.ipynb
