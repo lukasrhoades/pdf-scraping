@@ -179,47 +179,70 @@ def graybook_scraper(file, year):
                     for row in table:
                         if "$" not in row[-1]:  # Not an observation
                             continue
+                        if "*" in row[-1]:
+                            continue  # Total
+
                         if row[0] != "":  # 1st job
                             try:
                                 name_match = re.match(r"(.*),(.*)", row[0])
                                 employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
-                                employee["Job Title"] = row[1]
-                                employee["Tenure"] = row[2]
-                                employee["Employee Class"] = row[3]
-                                employee["Present FTE"] = float(row[4].lstrip("$"))
-                                employee["Proposed FTE"] = float(row[5].lstrip("$"))
-                                employee["Present Salary"] = float(row[6].replace(",", "").lstrip("$"))
-                                employee["Proposed Salary"] = float(row[7].replace(",", "").lstrip("$"))
-                            except IndexError:
+                            except AttributeError:
+                                employee = {"Name": row[1]}
+                                name = row[1]  # Save for second job
                                 missed.append(row)
-                                continue
-                            employees.append(employee)
+                            employee["Job Title"] = row[1]
+                            employee["Tenure"] = row[2]
+                            employee["Employee Class"] = row[3]
+                            try:
+                                employee["Present FTE"] = float(row[4].lstrip("$"))
+                            except ValueError:
+                                employee["Present FTE"] = row[4]
+                                missed.append(row)
+                            try:
+                                employee["Proposed FTE"] = float(row[5].lstrip("$"))
+                            except ValueError:
+                                employee["Proposed FTE"] = row[5]
+                                missed.append(row)
+                            try:
+                                employee["Present Salary"] = float(row[6].replace(",", "").lstrip("$"))
+                            except ValueError:
+                                employee["Present Salary"] = row[6]
+                                missed.append(row)
+                            try:
+                                employee["Proposed Salary"] = float(row[7].replace(",", "").lstrip("$"))
+                            except ValueError:
+                                employee["Proposed Salary"] = row[7]
+                                missed.append(row)
                         elif row[1] != "":  # 2nd job
                             try:
                                 employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
-                                employee["Job Title"] = row[1]
-                                employee["Tenure"] = row[2]
-                                employee["Employee Class"] = row[3]
-                                employee["Present FTE"] = float(row[4].lstrip("$"))
-                                employee["Proposed FTE"] = float(row[5].lstrip("$"))
-                                employee["Present Salary"] = float(row[6].replace(",", "").lstrip("$"))
-                                employee["Proposed Salary"] = float(row[7].replace(",", "").lstrip("$"))
-                            except IndexError:
+                            except ValueError:
+                                employee = {"Name": name}
                                 missed.append(row)
-                                continue
-                            employees.append(employee)
-                        elif "*" in row[4]:  # Total
+                            employee["Job Title"] = row[1]
+                            employee["Tenure"] = row[2]
+                            employee["Employee Class"] = row[3]
                             try:
-                                employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
-                                employee["Job Title"] = "Total for All Jobs"
-                                employee["Present FTE"] = float(row[4].lstrip("$").rstrip("*"))
-                                employee["Proposed FTE"] = float(row[5].lstrip("$").rstrip("*"))
-                                employee["Present Salary"] = float(row[6].replace(",", "").lstrip("$").rstrip("*"))
-                                employee["Proposed Salary"] = float(row[7].replace(",", "").lstrip("$").rstrip("*"))
-                            except IndexError:
+                                employee["Present FTE"] = float(row[4].lstrip("$"))
+                            except ValueError:
+                                employee["Present FTE"] = row[4]
                                 missed.append(row)
-                                continue
-                            employees.append(employee)
+                            try:
+                                employee["Proposed FTE"] = float(row[5].lstrip("$"))
+                            except ValueError:
+                                employee["Proposed FTE"] = row[5]
+                                missed.append(row)
+                            try:
+                                employee["Present Salary"] = float(row[6].replace(",", "").lstrip("$"))
+                            except ValueError:
+                                employee["Present Salary"] = row[6]
+                                missed.append(row)
+                            try:
+                                employee["Proposed Salary"] = float(row[7].replace(",", "").lstrip("$"))
+                            except ValueError:
+                                employee["Proposed Salary"] = row[7]
+                                missed.append(row)
+                        employees.append(employee)
                 except TypeError:
                     print(year, page)
 
@@ -336,9 +359,13 @@ def graybook_scraper(file, year):
                             continue  # Will calculate later
                     else:
                         if row[1] != "Employee":  # Not total
-                            if row[0].strip()[-1] == ",":  # Need second part of name
+                            if year == 2023 and row[0].strip() == "White, Judith Bess White,":
+                                employee = {"Name": "Judith Bess White"}
+                            elif row[0].strip()[-1] == ",":  # Need second part of name
                                 employee = {"Name": row[0]}
                                 grab_name = True
+                            elif year == 2023 and row[0] == "Tiffany Barnett":
+                                employee = {"Name": "Tiffany Barnett White"}
                             else:
                                 try:
                                     name_match = re.match(r"(.*),(.*)", row[0])
@@ -514,7 +541,7 @@ def graybook_scraper(file, year):
                                 employees.append(employee)
 
     # Handle fractional appointments
-    if 2006 < year < 2024:
+    if 2003 < year < 2024:
         # Create dataframe with all employee data
         df = pd.DataFrame(employees)
 
