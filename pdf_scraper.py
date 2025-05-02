@@ -13,34 +13,41 @@ def graybook_scraper(file, year):
     # List to store missed lines
     missed = []
 
-    if year == 1990:
+    if year < 2004:
+
+        broken = False
+
         # Read in the pdf file
         with pdfplumber.open(file) as pdf:
             # Iterate through each page
             for i, page in enumerate(pdf.pages):  
                 # Find columns based on words in header
                 words = page.extract_words()
-                try:
-                    if "=<C=" in words[1]["text"]:
-                        break  # Reached end of salary data
-                except IndexError:
-                    print(page)  # Not a page with employee data
-                    continue
-                col_3 = None
+                if year == 1990:
+                    try:
+                        if "=<C=" in words[1]["text"]:
+                            break  # Reached end of salary data
+                    except IndexError:
+                        print(page)  # Not a page with employee data
+                        continue
+                if len(words) == 0:
+                    continue  # Not a page with employee data
+                col_3, col_6 = [None] * 2
                 for word in words[:50]:
                     if "SEPTEMBER" in word["text"]:
                         col_1 = word["x0"] - 10
-                    elif "1990" in word["text"]:
-                        col_2 = word["x1"] + 20
-                    elif "ILLINOIS" in word["text"]:
+                    elif f"{year}" in word["text"]:
+                        col_2 = word["x1"] + 25
+                    elif any(substring in word["text"] for substring in ["ILLINOIS", "ILLI", "NOIS", "NOJS"]):
                         if col_3 is None:
                             col_3 = word["x0"] + 10
-                            col_4 = word["x1"]
+                            col_4 = word["x1"] - 3
                     elif "PRESENT" in word["text"]:
-                        col_5 = word["x0"] - 5
-                    elif "PROPOSED" in word["text"]:
-                        col_6 = word["x0"] - 1
-                        col_7 = word["x1"] + 1
+                        col_5 = word["x0"] - 10
+                    elif any(substring in word["text"] for substring in ["PROPOSED", "ROPOSE"]):
+                        if col_6 is None:
+                            col_6 = word["x0"] - 13
+                            col_7 = word["x1"] + 1
                 
                 try:
                     # Set column settings
@@ -54,117 +61,82 @@ def graybook_scraper(file, year):
                 
                 try:
                     table = page.extract_table(table_settings=table_settings)
-                    if i == 141:  # Buggy page, need to use Azure
+                    if year == 1990 and i == 141:  # Buggy page, need to use Azure
                         raise TypeError
                 except TypeError:
-                    if len(words) < 25:  # Not a page with employee data
+                    if year == 1990:
+                        if len(words) < 25:  # Not a page with employee data
+                            continue
+                        else:  # Use Azure
+                            # Save page
+                            reader = PdfReader(pdf)
+                            page_saver = PdfWriter()
+                            page_saver.add_page(reader.pages[i])
+                            page_saver.write("temp.pdf")
+
+                            # Make API call
+                            try:
+                                table = get_azure_data("temp.pdf", "Illinois")
+                            except IndexError:  # No tables detected
+                                print(page)
+                                continue
+                    else:
                         continue
-                    else:  # Use Azure
-                        # Save page
-                        reader = PdfReader(pdf)
-                        page_saver = PdfWriter()
-                        page_saver.add_page(reader.pages[i])
-                        page_saver.write("temp.pdf")
-
-                        # Make API call
+                
+                for row in table:
+                    # Skip title/empty/irrelevant rows
+                    if row[0] is None:
+                        continue
+                    if "SEPTEMBER" in row[0]:
+                        continue
+                    if "PRESENT" in row[4]:
+                        continue
+                    if row[:] == ["", "", "", "", "", ""]:
+                        continue
+                    if re.match(r".-..-..\s", row[0]):
+                        continue  # Department heading
+                    if row[-1] == "":
+                        continue  # No salary data
+                    
+                    if row[0] != "":  # First job
+                        name = row[0]
+                        employee = {"Name": name}
+                        employee["Job Title"] = row[1]
+                        employee["Tenure/Services"] = row[2]
                         try:
-                            table = get_azure_data("temp.pdf", "Illinois")
-                        except IndexError:  # No tables detected
-                            print(page)
+                            employee["Proposed FTE"] = float(fte_to_numer(row[3]))
+                            employee["Present Salary"] = float(sal_to_numer(row[4]))
+                            employee["Proposed Salary"] = float(sal_to_numer(row[5]))
+                        except (IndexError, ValueError):
+                            broken = True
+                            row.append("first job fail")
+                            missed.append(row)
                             continue
-
-                try:
-                    for row in table:
-                        # Skip title/empty/irrelevant rows
-                        if row[0] is None:
-                            continue
-                        if "SEPTEMBER" in row[0]:
-                            continue
-                        if "PRESENT" in row[4]:
-                            continue
-                        if row[:] == ["", "", "", "", "", ""]:
-                            continue
-                        if re.match(r".-..-..\s", row[0]):
-                            continue
-
-                        elif row[0] != "":  # First job
-                            name = row[0]
-                            employee = {"Name": name}
-                            employee["Job Title"] = row[1]
-                            if len(row[2]) != 2:
-                                missed.append(row)
-                                continue
-                            try:
-                                employee["Tenure"] = row[2][0]
-                                employee["Services"] = row[2][1]
-                            except IndexError:
-                                missed.append(row)
-                                continue
-                            employee["Proposed FTE"] = row[3]
-                            try:
-                                employee["Present Salary"] = float(row[4])
-                                employee["Proposed Salary"] = float(row[5])
-                            except IndexError:
-                                missed.append(row)
-                                continue
-                            except ValueError:
-                                employee["Present Salary"] = row[4]
-                                employee["Proposed Salary"] = row[5]
+                        broken = False
+                        employees.append(employee)
+                    elif broken == True:  # First job wasn't captured
+                        row.append("continuation row")
+                        missed.append(row)
+                        continue
+                    elif "*" in row[3] or "•" in row[3] or "'" in row[3]:  # Total
+                        continue
+                    elif row[-1] != "":  # 2nd payment
+                        employee = employees.pop(-1)
+                        employee["Job Title"] += " " + row[1]  # Sometimes has continuation of title
+                        try:
+                            employee["Proposed FTE"] += float(fte_to_numer(row[3]))
+                            employee["Present Salary"] += float(sal_to_numer(row[4]))
+                            employee["Proposed Salary"] += float(sal_to_numer(row[5]))
                             employees.append(employee)
-                        elif row[1] != "" and row[0] == "" and row[2:6] == [""] * 4:
-                            # Second part of job title
-                            employee = employees.pop(-1)
-                            employee["Job Title"] += " " + row[1]
-                            employees.append(employee)
-                        elif "*" in row[3] or "•" in row[3]:  # Total
-                            try:
-                                employee = {"Name": name}
-                                employee["Job Title"] = "Total for All Jobs"
-                                employee["Proposed FTE"] = row[3].rstrip("*").rstrip("•").rstrip("'")
-                                employee["Present Salary"] = float(row[4].rstrip("*").rstrip("•").rstrip("'"))
-                                employee["Proposed Salary"] = float(row[5].rstrip("*").rstrip("•").rstrip("'"))
-                            except IndexError:
-                                missed.append(row)
-                                continue
-                            except ValueError:
-                                employee = {"Name": name}
-                                employee["Job Title"] = "Total for All Jobs"
-                                employee["Proposed FTE"] = row[3].rstrip("*").rstrip("•").rstrip("'")
-                                employee["Present Salary"] = row[4].rstrip("*").rstrip("•").rstrip("'")
-                                employee["Proposed Salary"] = row[5].rstrip("*").rstrip("•").rstrip("'")
-                            employees.append(employee)
-                        elif row[1] == "" and row[-1] != "":  # 2nd payment?
-                            try:
-                                employee = {"Name": name}
-                                employee["Job Title"] = "Second Payment"
-                                employee["Proposed FTE"] = row[3]
-                                employee["Present Salary"] = float(row[4])
-                                employee["Proposed Salary"] = float(row[5])
-                            except (UnboundLocalError, IndexError):
-                                missed.append(row)
-                                continue
-                            except ValueError:
-                                employee = {"Name": name}
-                                employee["Job Title"] = "Second Payment"
-                                employee["Proposed FTE"] = row[3]
-                                employee["Present Salary"] = row[4]
-                                employee["Proposed Salary"] = row[5]
-                            employees.append(employee)
-                        elif row[1] != "":  # Spillover of job title
-                            try:
-                                employee = employees.pop(-1)
-                                employee["Job Title"] += " " + row[1]
-                                employees.append(employee)
-                            except (IndexError, ValueError, TypeError):
-                                missed.append(row)
-                                continue
-                except IndexError:
-                    missed.append(row)
-                    continue
-                except TypeError:
-                    print(row)
-                    print(page)
-                    continue
+                        except ValueError:
+                            missed.append(employee.values())
+                            row.append("2nd payment fail")
+                            missed.append(row)
+                    elif row[1] != "" and row[0] == "" and row[2:6] == [""] * 4:
+                        # Second part of job title
+                        employee = employees.pop(-1)
+                        employee["Job Title"] += " " + row[1]
+                        employees.append(employee)
     elif 2003 < year < 2007:
         # Read in the pdf file
         with pdfplumber.open(file) as pdf:
@@ -541,50 +513,53 @@ def graybook_scraper(file, year):
                                 employees.append(employee)
 
     # Handle fractional appointments
-    if 2003 < year < 2024:
-        # Create dataframe with all employee data
-        df = pd.DataFrame(employees)
+    # Create dataframe with all employee data
+    df = pd.DataFrame(employees)
 
-        # Groupby name and then filter out groupings of different people
-        salaries = df.groupby("Name", sort=False)
+    # Groupby name and then filter out groupings of different people
+    salaries = df.groupby("Name", sort=False)
+    if year < 2004:
+        salaries = salaries.filter(lambda x: x["Proposed FTE"].sum() <= 100)
+    else:
         salaries = salaries.filter(lambda x: x["Present FTE"].sum() <= 1.00)
 
-        # Grab the index of those who were grouped after filtering
-        filter = salaries.index
+    # Grab the index of those who were grouped after filtering
+    filter = salaries.index
 
-        # Then set index to be the name
-        salaries.set_index("Name", inplace=True)
+    # Then set index to be the name
+    salaries.set_index("Name", inplace=True)
 
-        # Collect all the employee information across appointments and merge them together 
-        jobs = df.loc[filter,:].groupby("Name", sort=False)["Job Title"].apply(lambda x: " and ".join(x))
+    # Collect all the employee information across appointments and merge them together 
+    jobs = df.loc[filter,:].groupby("Name", sort=False)["Job Title"].apply(lambda x: " and ".join(x))
+    if year < 2004:
+        tenure_services = df.loc[filter,:].groupby("Name", sort=False)["Tenure/Services"].apply(lambda x: " and ".join(x))
+        merge2 = pd.merge(jobs, tenure_services, on="Name")
+    else:
         tenure = df.loc[filter,:].groupby("Name", sort=False)["Tenure"].apply(lambda x: " and ".join(x))
         employee_class = df.loc[filter,:].groupby("Name", sort=False)["Employee Class"].apply(lambda x: " and ".join(x))
         merge1 = pd.merge(jobs, tenure, on="Name")
         merge2 = pd.merge(merge1, employee_class, on="Name")
 
-        # Now sum the FTE's and salaries and merge again
-        salaries = salaries.iloc[:,3:].groupby("Name", sort=False).sum()
-        merge3 = pd.merge(merge2, salaries, on="Name")
-        
-        # Grab the names of those whose salaries have been summed
-        names = salaries.index
-
-        # Now grab the complete data for everyone else
-        mask = df["Name"].isin(names)
-        others = df.loc[~mask,:].set_index("Name")
-
-        # Final merge for all the data and sort the data
-        merge4 = pd.concat([merge3, others])
-        merge4.sort_index(inplace=True)
-
-        # Write csv file
-        merge4.to_csv(f"converted/illinois/{year}.csv")
-
-        return missed, len(df)
+    # Now sum the FTE's and salaries and merge again
+    if year < 2004:
+        salaries = salaries.iloc[:,2:].groupby("Name", sort=False).sum()
     else:
-        # Create csv file
-        df = pd.DataFrame(employees)
-        df.to_csv(f"converted/illinois/{year}.csv", index=False)
+        salaries = salaries.iloc[:,3:].groupby("Name", sort=False).sum()
+    merge3 = pd.merge(merge2, salaries, on="Name")
+    
+    # Grab the names of those whose salaries have been summed
+    names = salaries.index
+
+    # Now grab the complete data for everyone else
+    mask = df["Name"].isin(names)
+    others = df.loc[~mask,:].set_index("Name")
+
+    # Final merge for all the data and sort the data
+    merge4 = pd.concat([merge3, others])
+    merge4.sort_index(inplace=True)
+
+    # Write csv file
+    merge4.to_csv(f"converted/illinois/{year}.csv")
 
     return missed, len(df)
 
@@ -607,6 +582,13 @@ def value_finder(employee, line):
         employee["Proposed Salary"] = float(values[0][3].replace(",", ""))
     except IndexError:
         return IndexError
+
+
+def fte_to_numer(value):
+    return value.replace("so", "50").replace("JO", "90").replace("TO", "10")
+
+def sal_to_numer(value):
+    return value.replace("so", "50").replace("O", "0").replace("B", "8").replace("D", "0").replace("S", "5").replace("C", "0")
 
 
 def graybook_missed_scraper(data):
