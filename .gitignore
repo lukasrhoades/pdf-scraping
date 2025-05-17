@@ -19,6 +19,7 @@ table_debug*
 test*
 *.xlsx
 rotated_temp.pdf
+ocr_result.pdf
 pdf_scrape.ipynb
 .DS_Store
 .ipynb_checkpoints

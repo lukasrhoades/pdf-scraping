@@ -20,7 +20,7 @@ def graybook_scraper(file, year):
         # Read in the pdf file
         with pdfplumber.open(file) as pdf:
             # Iterate through each page
-            for i, page in enumerate(pdf.pages):  
+            for i, page in enumerate(pdf.pages): 
                 # Find columns based on words in header
                 words = page.extract_words()
                 if year == 1990:
@@ -32,10 +32,11 @@ def graybook_scraper(file, year):
                         continue
                 if len(words) == 0:
                     continue  # Not a page with employee data
-                col_3, col_6 = [None] * 2
+                col_1, col_3, col_6 = [None] * 3
                 for word in words[:50]:
-                    if "SEPTEMBER" in word["text"]:
-                        col_1 = word["x0"] - 10
+                    if "SEPT" in word["text"]:
+                        if col_1 is None:
+                            col_1 = word["x0"] - 10
                     elif f"{year}" in word["text"]:
                         col_2 = word["x1"] + 25
                     elif any(substring in word["text"] for substring in ["ILLINOIS", "ILLI", "NOIS", "NOJS"]):
@@ -69,7 +70,7 @@ def graybook_scraper(file, year):
                             continue
                         else:  # Use Azure
                             # Save page
-                            reader = PdfReader(pdf)
+                            reader = PdfReader(file)
                             page_saver = PdfWriter()
                             page_saver.add_page(reader.pages[i])
                             page_saver.write("temp.pdf")
@@ -105,7 +106,10 @@ def graybook_scraper(file, year):
                         employee["Tenure/Services"] = row[2]
                         try:
                             employee["Proposed FTE"] = float(fte_to_numer(row[3]))
-                            employee["Present Salary"] = float(sal_to_numer(row[4]))
+                            if row[4] == "":  # Handle no present salary
+                                employee["Present Salary"] = 0
+                            else:
+                                employee["Present Salary"] = float(sal_to_numer(row[4]))
                             employee["Proposed Salary"] = float(sal_to_numer(row[5]))
                         except (IndexError, ValueError):
                             broken = True
@@ -585,7 +589,7 @@ def value_finder(employee, line):
 
 
 def fte_to_numer(value):
-    return value.replace("so", "50").replace("JO", "90").replace("TO", "10")
+    return value.replace("so", "50").replace("TOO", "100").replace("D", "0").replace("O", "0").replace("S", "5")
 
 def sal_to_numer(value):
     return value.replace("so", "50").replace("O", "0").replace("B", "8").replace("D", "0").replace("S", "5").replace("C", "0")
@@ -1021,10 +1025,13 @@ def mich_scraper(file, year):
                     employee["Appointment Title"] = row[2]
                     employee["Appointing Department"] = row[3]
                     try:
-                        employee["Annnual FTR"] = float(row[4].replace(",", ""))
+                        employee["Annual FTR"] = float(row[4].replace(",", ""))
                     except ValueError:
-                        employee["Annnual FTR"] = row[4]
-                        missed.append(row)
+                        if "###" in row[4]:
+                            employee["Annual FTR"] = 0
+                        else:
+                            employee["Annual FTR"] = row[4]
+                            missed.append(row)
                     employee["FTR Basis"] = row[5]
                     try:
                         employee["Fraction"] = float(row[6])
@@ -1046,10 +1053,47 @@ def mich_scraper(file, year):
                     
                     # Add employee
                     employees.append(employee)
-       
-    # Create csv file
+
+    # Handle fractional appointments
+    # Create dataframe with all employee data
     df = pd.DataFrame(employees)
-    df.to_csv(f"converted/umich/umich-{year}.csv", index=False)
+
+    # Groupby name and then filter out groupings of different people
+    salaries = df.groupby("Name", sort=False)
+    salaries = salaries.filter(lambda x: x["Fraction"].sum() <= 1.00)
+
+    # Grab the index of those who were grouped after filtering
+    filter = salaries.index
+
+    # Then set index to be the name
+    salaries.set_index("Name", inplace=True)
+
+    # Collect all the employee information across appointments 
+    campus = df.loc[filter,:].groupby("Name", sort=False)["Campus"].first()
+    jobs = df.loc[filter,:].groupby("Name", sort=False)["Appointment Title"].apply(lambda x: " and ".join(x))
+    dpt = df.loc[filter,:].groupby("Name", sort=False)["Appointing Department"].apply(lambda x: " and ".join(x))
+    ftr = df.loc[filter,:].groupby("Name", sort=False)["FTR Basis"].apply(lambda x: " and ".join(x))
+    merge1 = pd.merge(campus, jobs, on="Name")
+    merge2 = pd.merge(dpt, ftr, on="Name")
+    merge2 = pd.merge(merge1, merge2, on="Name")
+
+    # Now sum the fraction's and salaries and merge again
+    salaries = salaries.iloc[:,[3,5,6]].groupby("Name", sort=False).sum()
+    merge3 = pd.merge(merge2, salaries, on="Name")
+    
+    # Grab the names of those whose salaries have been summed
+    names = salaries.index
+
+    # Now grab the complete data for everyone else
+    mask = df["Name"].isin(names)
+    others = df.loc[~mask,:].set_index("Name")
+
+    # Final merge for all the data and sort the data
+    merge4 = pd.concat([merge3, others])
+    merge4.sort_index(inplace=True)
+
+    # Write csv file
+    merge4.to_csv(f"converted/umich/umich-{year}.csv")
 
     return missed, len(df)
 
