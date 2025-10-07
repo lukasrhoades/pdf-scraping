@@ -6,9 +6,10 @@
 /images
 /training_data
 codes.py
+fix_names_illinois.ipynb
 illinois_scraping*
 umich_scraping.ipynb
-uf_scraping.ipynb
+uf_scraping*.ipynb
 pre_processing.ipynb
 GrayBook1990*
 temp.pdf

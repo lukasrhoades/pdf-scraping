@@ -160,8 +160,10 @@ def graybook_scraper(file, year):
 
                         if row[0] != "":  # 1st job
                             try:
-                                name_match = re.match(r"(.*),(.*)", row[0])
-                                employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                                #name_match = re.match(r"(.*),(.*)", row[0])
+                                #employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                                name = row[0]
+                                employee = {"Name": row[0]}
                             except AttributeError:
                                 employee = {"Name": row[1]}
                                 name = row[1]  # Save for second job
@@ -191,7 +193,8 @@ def graybook_scraper(file, year):
                                 missed.append(row)
                         elif row[1] != "":  # 2nd job
                             try:
-                                employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                                #employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                                employee = {"Name": name}
                             except ValueError:
                                 employee = {"Name": name}
                                 missed.append(row)
@@ -222,47 +225,72 @@ def graybook_scraper(file, year):
                 except TypeError:
                     print(year, page)
 
-    elif year < 2024:
+    elif year < 2025:
         # Read in the pdf file
         with pdfplumber.open(file) as pdf:
             
             grab_name = False  # This is used for getting second part of name
 
             # Iterate through each page
-            for page in pdf.pages:
+            for i, page in enumerate(pdf.pages):
                 # Initialize columns
                 col_1, col_2, col_3, col_4, col_5, col_6, col_7, col_8, col_9 = [None] * 9
 
                 # Find columns based on words in header
-                words = page.extract_words()
-                for word in words[:50]:
-                    if "Employee" in word["text"]:
-                        if col_1 is None:
-                            col_1 = word["x0"] - 1
-                    elif "Job" in word["text"]:
-                        if col_2 is None:
-                            col_2 = word["x0"] - 1
-                    elif "Tenure" in word["text"]:
-                        if col_3 is None:
-                            col_3 = word["x0"] + 10
-                            col_4 = word["x1"] + 15
-                    elif "Present" in word["text"]:
-                        if col_5 is None:  # Only use first occurance
-                            col_5 = word["x0"] - 5
-                    elif "Proposed" in word["text"]:
-                        if col_6 is None:
-                            col_6 = word["x0"] - 3
-                    elif "Salary" in word["text"]:
-                        if col_7 is None:
-                            col_7 = word["x0"] - 17
-                            col_8 = word["x1"] + 17
-                            col_9 = word["x1"] + 70
-                    
-                # Set column settings
-                table_settings = {
-                    "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5, col_6, col_7, col_8, col_9],
-                    "horizontal_strategy": "text"
-                }
+                if year < 2024 or (year == 2024 and i < 552):
+                    words = page.extract_words()
+                    for word in words[:50]:
+                        if "Employee" in word["text"]:
+                            if col_1 is None:
+                                col_1 = word["x0"] - 1
+                        elif "Job" in word["text"]:
+                            if col_2 is None:
+                                col_2 = word["x0"] - 1
+                        elif "Tenure" in word["text"]:
+                            if col_3 is None:
+                                col_3 = word["x0"] + 10
+                                col_4 = word["x1"] + 15
+                        elif "Present" in word["text"]:
+                            if col_5 is None:  # Only use first occurance
+                                col_5 = word["x0"] - 5
+                        elif "Proposed" in word["text"]:
+                            if col_6 is None:
+                                col_6 = word["x0"] - 3
+                        elif "Salary" in word["text"]:
+                            if col_7 is None:
+                                col_7 = word["x0"] - 17
+                                col_8 = word["x1"] + 17
+                                col_9 = word["x1"] + 70
+                elif year == 2024 and i == 552:
+                    for word in words[:50]:
+                        if "Employee" in word["text"]:
+                            if col_1 is None:
+                                col_1 = word["x0"] - 1
+                        elif "Job" in word["text"]:
+                            if col_2 is None:
+                                col_2 = word["x0"] - 3
+                        elif "Tenure" in word["text"]:
+                            if col_3 is None:
+                                col_3 = word["x0"] + 20
+                                col_4 = word["x1"] + 15
+                        elif "Present" in word["text"]:
+                            if col_5 is None:  # Only use first occurance
+                                col_5 = word["x0"] - 5
+                        elif "Proposed" in word["text"]:
+                            if col_6 is None:
+                                col_6 = word["x0"] - 3
+                        elif "Salary" in word["text"]:
+                            if col_7 is None:
+                                col_7 = word["x0"] - 12
+                                col_8 = word["x1"] + 17
+                                col_9 = word["x1"] + 68
+
+                if year < 2024 or (year == 2024 and i < 553):  
+                    # Set column settings
+                    table_settings = {
+                        "explicit_vertical_lines": [col_1, col_2, col_3, col_4, col_5, col_6, col_7, col_8, col_9],
+                        "horizontal_strategy": "text"
+                    }
 
                 try:
                     table = page.extract_table(table_settings=table_settings)
@@ -274,8 +302,8 @@ def graybook_scraper(file, year):
                     if grab_name is True:  # Second part of name
                         employees.pop(-1)
                         employee["Name"] += row[0]
-                        name_match = re.match(r"(.*),(.*)", employee["Name"])
-                        employee["Name"] = name_match.group(2).strip() + " " + name_match.group(1).strip()
+                        #name_match = re.match(r"(.*),(.*)", employee["Name"])
+                        #employee["Name"] = name_match.group(2).strip() + " " + name_match.group(1).strip()
                         employees.append(employee)
                         grab_name = False
                         continue
@@ -296,9 +324,11 @@ def graybook_scraper(file, year):
                             else:
                                 try:
                                     if row[0] != "":  # First job
-                                        name_match = re.match(r"(.*),(.*)", row[0])
+                                        #name_match = re.match(r"(.*),(.*)", row[0])
+                                        name = row[0]
                                     # Otherwise, second job
-                                    employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                                    #employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                                    employee = {"Name": name}
                                 except AttributeError:
                                     if row[0] == "":  # Second job
                                         employee = {"Name": name}
@@ -344,8 +374,9 @@ def graybook_scraper(file, year):
                                 employee = {"Name": "Tiffany Barnett White"}
                             else:
                                 try:
-                                    name_match = re.match(r"(.*),(.*)", row[0])
-                                    employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                                    #name_match = re.match(r"(.*),(.*)", row[0])
+                                    #employee = {"Name": name_match.group(2).strip() + " " + name_match.group(1).strip()}
+                                    employee = {"Name": row[0]}
                                 except AttributeError:
                                     employee = {"Name": row[0]}
                                     missed.append(row)
@@ -1345,7 +1376,8 @@ def uf_scraper(file, year):
                         college_area = row[0].replace("\n", " ")
                         department = row[1].replace("\n", " ")
 
-                    employee = {"Name": row[2].replace(",", "").replace("\n", " ").title()}
+                    #employee = {"Name": row[2].replace(",", "").replace("\n", " ").title()}
+                    employee = {"Name": row[2].replace("\n", " ")}
                     if employee["Name"] == "":  # Total
                         continue
                     employee["College"] = college_area
